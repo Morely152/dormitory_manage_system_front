@@ -92,6 +92,16 @@ export const ACCESS_MODULES = Object.freeze([
     roles: [ROLE_KEYS.SYSTEM_ADMIN],
   },
   {
+    id: 'room-management',
+    routeName: 'RoomManagement',
+    path: '/system/rooms',
+    title: '房间信息管理',
+    description: '维护校区、苑区、楼栋和房间信息',
+    group: '系统管理',
+    icon: 'OfficeBuilding',
+    roles: [ROLE_KEYS.SYSTEM_ADMIN, ROLE_KEYS.DORMITORY_ADMIN],
+  },
+  {
     id: 'accommodation-import',
     routeName: 'AccommodationImport',
     path: '/accommodation/import',

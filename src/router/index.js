@@ -2,11 +2,13 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { ACCESS_MODULES } from '@/config/access'
 import { useAuthStore } from '@/stores/auth'
 
+const implementedComponents = {
+  'accommodation-import': () => import('@/views/AccommodationImportView.vue'),
+  'room-management': () => import('@/views/RoomManagementView.vue'),
+}
+
 const businessRoutes = ACCESS_MODULES.map((module) => {
-  const component =
-    module.id === 'accommodation-import'
-      ? () => import('@/views/AccommodationImportView.vue')
-      : () => import('@/views/FeaturePlaceholderView.vue')
+  const component = implementedComponents[module.id] || (() => import('@/views/FeaturePlaceholderView.vue'))
 
   return {
     path: module.path,
