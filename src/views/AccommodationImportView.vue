@@ -13,6 +13,7 @@ import {
   commitStudentAccommodationImport,
   downloadStudentAccommodationTemplate,
 } from '@/api/accommodationImport'
+import { getBuildings, getCampuses, getRooms, getZones } from '@/api/roomManagement'
 
 const EXCEL_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 const MAX_FILE_SIZE = 10 * 1024 * 1024
@@ -60,6 +61,34 @@ const hasBatchResult = computed(() => Boolean(commitResult.value))
 
 const singleFormRef = ref()
 const singleLoading = ref(false)
+const resourceLabels = new Map()
+
+const RESOURCE_LEVELS = [
+  {
+    kind: 'campuses',
+    idFields: ['id', 'campusId', 'value'],
+    nameFields: ['campusName', 'name', 'label'],
+    load: () => getCampuses(),
+  },
+  {
+    kind: 'zones',
+    idFields: ['id', 'zoneId', 'value'],
+    nameFields: ['zoneName', 'name', 'label'],
+    load: (campusId) => getZones(campusId),
+  },
+  {
+    kind: 'buildings',
+    idFields: ['id', 'buildingId', 'value'],
+    nameFields: ['buildingName', 'name', 'label'],
+    load: (zoneId) => getBuildings(zoneId),
+  },
+  {
+    kind: 'rooms',
+    idFields: ['id', 'roomId', 'value'],
+    nameFields: ['roomCode', 'roomNo', 'roomNumber', 'roomName', 'name', 'label'],
+    load: (buildingId) => getRooms(buildingId),
+  },
+]
 
 let mobileMediaQuery
 
@@ -90,6 +119,7 @@ function createEmptySingleForm() {
     mobile: '',
     studentStatus: '在读',
     accommodationStatus: '入住',
+    resourcePath: [],
     campusName: '',
     zoneName: '',
     buildingName: '',
@@ -98,11 +128,85 @@ function createEmptySingleForm() {
     teacherName: '',
     teacherPhone: '',
     counselorPhone: '',
-    remark: '',
   }
 }
 
 const singleForm = reactive(createEmptySingleForm())
+
+function firstDefined(source, fields) {
+  for (const field of fields) {
+    const value = source?.[field]
+    if (value !== undefined && value !== null && value !== '') return value
+  }
+  return undefined
+}
+
+function compareResourceRows(rowA, rowB, idFields) {
+  const valueA = firstDefined(rowA, idFields)
+  const valueB = firstDefined(rowB, idFields)
+  const numberA = Number(valueA)
+  const numberB = Number(valueB)
+  if (Number.isFinite(numberA) && Number.isFinite(numberB)) return numberA - numberB
+  return String(valueA ?? '').localeCompare(String(valueB ?? ''), 'zh-CN', { numeric: true })
+}
+
+async function loadResourceOptions(node, resolve, reject) {
+  const level = RESOURCE_LEVELS[node.level]
+  if (!level) {
+    resolve([])
+    return
+  }
+
+  try {
+    const response = await level.load(node.value)
+    const rows = unwrapResponse(response, `${level.kind} 加载失败`)
+    if (!Array.isArray(rows)) throw new Error('住宿资源列表响应格式不正确')
+
+    const options = [...rows]
+      .sort((rowA, rowB) => compareResourceRows(rowA, rowB, level.idFields))
+      .map((row) => {
+        const value = firstDefined(row, level.idFields)
+        const label = String(firstDefined(row, level.nameFields) ?? '').trim()
+        if (value === undefined || !label) return null
+
+        resourceLabels.set(`${level.kind}:${value}`, label)
+        return {
+          value,
+          label,
+          leaf: node.level === RESOURCE_LEVELS.length - 1,
+        }
+      })
+      .filter(Boolean)
+
+    resolve(options)
+  } catch (error) {
+    reject()
+    ElMessage.error(await requestErrorMessage(error, '住宿资源加载失败'))
+  }
+}
+
+const resourceCascaderProps = {
+  lazy: true,
+  lazyLoad: loadResourceOptions,
+  emitPath: true,
+}
+
+function handleResourcePathChange(path) {
+  const formFields = ['campusName', 'zoneName', 'buildingName', 'roomCode']
+  formFields.forEach((field, index) => {
+    const level = RESOURCE_LEVELS[index]
+    const value = path?.[index]
+    singleForm[field] = value === undefined ? '' : resourceLabels.get(`${level.kind}:${value}`) || ''
+  })
+}
+
+function validateResourcePath(_rule, value, callback) {
+  if (!Array.isArray(value) || value.length !== RESOURCE_LEVELS.length) {
+    callback(new Error('请选择完整的校区、苑区、楼栋和寝室'))
+    return
+  }
+  callback()
+}
 
 const singleRules = {
   studentNo: [{ required: true, message: '请输入学号', trigger: 'blur' }],
@@ -116,10 +220,7 @@ const singleRules = {
   studentStatus: [{ required: true, message: '请选择学籍状态', trigger: 'change' }],
   counselorPhone: [{ required: true, message: '请输入辅导员电话', trigger: 'blur' }],
   accommodationStatus: [{ required: true, message: '请选择住宿状态', trigger: 'change' }],
-  campusName: [{ required: true, message: '请输入校区名称', trigger: 'blur' }],
-  zoneName: [{ required: true, message: '请输入苑区名称', trigger: 'blur' }],
-  buildingName: [{ required: true, message: '请输入楼栋名称', trigger: 'blur' }],
-  roomCode: [{ required: true, message: '请输入寝室号', trigger: 'blur' }],
+  resourcePath: [{ validator: validateResourcePath, trigger: 'change' }],
   bedCode: [{ required: true, message: '请输入床位号', trigger: 'blur' }],
 }
 
@@ -333,7 +434,7 @@ function createSingleRowExcel() {
     班主任: singleForm.teacherName,
     班主任电话: singleForm.teacherPhone,
     辅导员: singleForm.counselorPhone,
-    备注: singleForm.remark,
+    备注: '',
   }
   const worksheet = XLSX.utils.json_to_sheet([row], { header: IMPORT_HEADERS })
   worksheet['!cols'] = IMPORT_HEADERS.map((header) => ({ wch: Math.max(header.length * 2 + 2, 12) }))
@@ -595,29 +696,27 @@ function resetSingleForm() {
                     <el-option label="校外住宿" value="校外住宿" />
                   </el-select>
                 </el-form-item>
-                <el-form-item label="校区名称" prop="campusName">
-                  <el-input v-model.trim="singleForm.campusName" />
-                </el-form-item>
-                <el-form-item label="苑区名称" prop="zoneName">
-                  <el-input v-model.trim="singleForm.zoneName" />
-                </el-form-item>
-                <el-form-item label="楼栋名称" prop="buildingName">
-                  <el-input v-model.trim="singleForm.buildingName" />
-                </el-form-item>
-                <el-form-item label="寝室号" prop="roomCode">
-                  <el-input v-model.trim="singleForm.roomCode" />
+                <el-form-item
+                  label="校区 / 苑区 / 楼栋 / 寝室"
+                  prop="resourcePath"
+                  class="resource-path-item"
+                >
+                  <el-cascader
+                    v-model="singleForm.resourcePath"
+                    :props="resourceCascaderProps"
+                    :show-all-levels="!isMobile"
+                    clearable
+                    placement="bottom-start"
+                    popper-class="resource-cascader-popper"
+                    separator=" / "
+                    placeholder="请选择住宿位置"
+                    @change="handleResourcePathChange"
+                  />
                 </el-form-item>
                 <el-form-item label="床位号" prop="bedCode">
                   <el-input v-model.trim="singleForm.bedCode" />
                 </el-form-item>
               </div>
-            </fieldset>
-
-            <fieldset class="form-group">
-              <legend>备注</legend>
-              <el-form-item prop="remark">
-                <el-input v-model="singleForm.remark" type="textarea" :rows="3" maxlength="300" show-word-limit />
-              </el-form-item>
             </fieldset>
 
             <div class="form-actions">
@@ -858,8 +957,13 @@ function resetSingleForm() {
 }
 
 .single-form :deep(.el-select),
-.single-form :deep(.el-input-number) {
+.single-form :deep(.el-input-number),
+.single-form :deep(.el-cascader) {
   width: 100%;
+}
+
+.resource-path-item {
+  grid-column: span 2;
 }
 
 .form-actions {
@@ -892,6 +996,33 @@ function resetSingleForm() {
 
   .form-grid--three {
     grid-template-columns: 1fr;
+  }
+
+  .resource-path-item {
+    grid-column: auto;
+  }
+
+  .single-form :deep(.el-cascader .el-input__wrapper) {
+    min-height: 44px;
+  }
+
+  :global(.resource-cascader-popper) {
+    max-width: calc(100vw - 24px);
+  }
+
+  :global(.resource-cascader-popper .el-cascader-panel) {
+    max-width: calc(100vw - 24px);
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+  }
+
+  :global(.resource-cascader-popper .el-cascader-menu) {
+    width: min(72vw, 260px);
+    min-width: min(72vw, 260px);
+  }
+
+  :global(.resource-cascader-popper .el-cascader-node) {
+    min-height: 44px;
   }
 
   .result-summary {
