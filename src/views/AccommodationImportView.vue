@@ -10,8 +10,8 @@ import {
 import { ElMessage } from 'element-plus'
 import * as XLSX from 'xlsx'
 import {
-  commitAccommodationImport,
-  downloadAccommodationTemplate,
+  commitStudentAccommodationImport,
+  downloadStudentAccommodationTemplate,
 } from '@/api/accommodationImport'
 
 const EXCEL_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -248,7 +248,7 @@ async function runBatchImport() {
   batchLoading.value = true
   resetBatchResult()
   try {
-    const commitResponse = await commitAccommodationImport(batchFile.value)
+    const commitResponse = await commitStudentAccommodationImport(batchFile.value)
     commitResult.value = unwrapResponse(commitResponse, '住宿信息导入失败')
 
     try {
@@ -285,7 +285,7 @@ async function downloadTemplate() {
   if (templateLoading.value) return
   templateLoading.value = true
   try {
-    const blob = await downloadAccommodationTemplate()
+    const blob = await downloadStudentAccommodationTemplate()
     saveBlob(blob, '住宿信息导入模板.xlsx')
   } catch (error) {
     ElMessage.error(await requestErrorMessage(error, '模板下载失败'))
@@ -351,7 +351,7 @@ async function submitSingleRecord() {
     if (!valid) return
 
     const file = createSingleRowExcel()
-    const commitResponse = await commitAccommodationImport(file)
+    const commitResponse = await commitStudentAccommodationImport(file)
     const result = unwrapResponse(commitResponse, '单条住宿信息添加失败')
     if (result.failedRows > 0) {
       const firstIssue = result.errors?.[0]
