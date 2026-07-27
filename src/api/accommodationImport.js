@@ -13,6 +13,13 @@ export function commitStudentAccommodationImport(file, mode) {
   })
 }
 
+export function commitSingleStudentAccommodation(data, mode) {
+  return http.post('/imports/students/single', data, {
+    params: { mode: mode || 'UPSERT' },
+    timeout: 30000,
+  })
+}
+
 export function downloadStudentAccommodationTemplate() {
   return http.get('/imports/students/template', {
     responseType: 'blob',

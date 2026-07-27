@@ -11,35 +11,14 @@ import { ElMessage } from 'element-plus'
 import * as XLSX from 'xlsx'
 import {
   commitStudentAccommodationImport,
+  commitSingleStudentAccommodation,
   downloadStudentAccommodationTemplate,
   getCollegeOptions,
 } from '@/api/accommodationImport'
 import { getBuildings, getCampuses, getRooms, getZones } from '@/api/roomManagement'
 
-const EXCEL_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 const MAX_FILE_SIZE = 10 * 1024 * 1024
 const MOBILE_MEDIA_QUERY = '(max-width: 600px)'
-const IMPORT_HEADERS = [
-  '学号',
-  '姓名',
-  '性别',
-  '学院名称',
-  '专业名称',
-  '班级名称',
-  '入学年级',
-  '联系电话',
-  '学籍状态',
-  '住宿状态',
-  '校区名称',
-  '苑区名称',
-  '楼栋名称',
-  '房间号',
-  '床位号',
-  '班主任',
-  '班主任电话',
-  '辅导员',
-  '备注',
-]
 
 const isMobile = ref(window.matchMedia(MOBILE_MEDIA_QUERY).matches)
 const activeTab = ref(isMobile.value ? 'single' : 'batch')
@@ -442,36 +421,6 @@ function exportErrorReport() {
   XLSX.writeFile(workbook, '住宿信息导入异常记录.xlsx')
 }
 
-function createSingleRowExcel() {
-  const row = {
-    学号: singleForm.studentNo,
-    姓名: singleForm.studentName,
-    性别: singleForm.gender,
-    学院名称: singleForm.collegeName,
-    专业名称: singleForm.majorName,
-    班级名称: singleForm.className,
-    入学年级: singleForm.gradeYear,
-    联系电话: singleForm.mobile,
-    学籍状态: singleForm.studentStatus,
-    住宿状态: singleForm.accommodationStatus,
-    校区名称: singleForm.campusName,
-    苑区名称: singleForm.zoneName,
-    楼栋名称: singleForm.buildingName,
-    房间号: singleForm.roomCode,
-    床位号: singleForm.bedCode,
-    班主任: singleForm.teacherName,
-    班主任电话: singleForm.teacherPhone,
-    辅导员: singleForm.counselorPhone,
-    备注: '',
-  }
-  const worksheet = XLSX.utils.json_to_sheet([row], { header: IMPORT_HEADERS })
-  worksheet['!cols'] = IMPORT_HEADERS.map((header) => ({ wch: Math.max(header.length * 2 + 2, 12) }))
-  const workbook = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(workbook, worksheet, '住宿信息')
-  const content = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' })
-  return new File([content], `单条住宿信息-${singleForm.studentNo}.xlsx`, { type: EXCEL_MIME })
-}
-
 async function submitSingleRecord() {
   if (singleLoading.value) return
   singleLoading.value = true
@@ -479,15 +428,28 @@ async function submitSingleRecord() {
     const valid = await singleFormRef.value.validate().catch(() => false)
     if (!valid) return
 
-    const file = createSingleRowExcel()
-    const commitResponse = await commitStudentAccommodationImport(file)
+    const commitResponse = await commitSingleStudentAccommodation({
+      studentNo: singleForm.studentNo,
+      studentName: singleForm.studentName,
+      gender: singleForm.gender,
+      collegeName: singleForm.collegeName,
+      majorName: singleForm.majorName,
+      className: singleForm.className,
+      gradeYear: String(singleForm.gradeYear),
+      mobile: singleForm.mobile,
+      studentStatus: singleForm.studentStatus,
+      accommodationStatus: singleForm.accommodationStatus,
+      campusName: singleForm.campusName,
+      zoneName: singleForm.zoneName,
+      buildingName: singleForm.buildingName,
+      roomCode: singleForm.roomCode,
+      bedCode: String(singleForm.bedCode),
+      classTeacher: singleForm.teacherName,
+      classTeacherPhone: singleForm.teacherPhone,
+      counselorPhone: singleForm.counselorPhone,
+      remark: '',
+    })
     const result = unwrapResponse(commitResponse, '单条住宿信息添加失败')
-    if (result.failedRows > 0) {
-      const firstIssue = result.errors?.[0]
-      throw new Error(
-        firstIssue ? `${firstIssue.field}：${firstIssue.message}` : result.message || '单条住宿信息添加失败',
-      )
-    }
     ElMessage.success(result.message || '单条住宿信息添加成功')
     resetSingleForm()
   } catch (error) {
