@@ -13,7 +13,15 @@ import {
   Search,
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getBuildings, getCampuses, getRooms, getZones } from '@/api/roomManagement'
+import { getBuildings, getCampuses, getRooms, getRoomTypes, getZones } from '@/api/roomManagement'
+
+const BUILDING_GENDER_OPTIONS = Object.freeze([
+  { label: '男生', value: '男生' },
+  { label: '女生', value: '女生' },
+  { label: '混寝', value: '混寝' },
+])
+
+const ROOM_GENDER_OPTIONS = Object.freeze(BUILDING_GENDER_OPTIONS.slice(0, 2))
 
 const ENTITY_CONFIG = Object.freeze({
   campuses: {
@@ -58,12 +66,14 @@ const TABLE_COLUMNS = Object.freeze({
   buildings: [
     { prop: 'name', label: '楼栋名称', minWidth: 220, navigable: true },
     { prop: 'code', label: '楼栋编号', minWidth: 160 },
+    { prop: 'gender', label: '性别', minWidth: 120 },
   ],
   rooms: [
     { prop: 'name', label: '寝室号', minWidth: 170 },
     { prop: 'floor', label: '楼层', minWidth: 120 },
     { prop: 'maxOccupancy', label: '最大人数', minWidth: 130 },
-    { prop: 'roomType', label: '寝室类型', minWidth: 180 },
+    { prop: 'roomGender', label: '房间性别', minWidth: 130 },
+    { prop: 'roomType', label: '房间类型', minWidth: 180 },
   ],
 })
 
@@ -90,6 +100,8 @@ const tabs = ref([
 ])
 const activeTab = ref('campuses')
 const editorRef = ref()
+const roomTypeOptions = ref([])
+const roomTypesLoading = ref(false)
 const editor = reactive({
   visible: false,
   mode: 'create',
@@ -101,6 +113,9 @@ const editor = reactive({
     code: '',
     floor: 1,
     maxOccupancy: 4,
+    gender: '',
+    roomGender: '',
+    roomTypeId: '',
     roomType: '',
   },
 })
@@ -114,7 +129,9 @@ const editorRules = {
   name: [{ required: true, message: '请输入名称', trigger: 'blur' }],
   floor: [{ required: true, message: '请输入楼层', trigger: 'change' }],
   maxOccupancy: [{ required: true, message: '请输入最大人数', trigger: 'change' }],
-  roomType: [{ required: true, message: '请输入寝室类型', trigger: 'change' }],
+  gender: [{ required: true, message: '请选择楼栋性别', trigger: 'change' }],
+  roomGender: [{ required: true, message: '请选择房间性别', trigger: 'change' }],
+  roomTypeId: [{ required: true, message: '请选择房间类型', trigger: 'change' }],
 }
 
 function pickValue(source, fields, fallback = '') {
@@ -155,12 +172,15 @@ function normalizeRow(source, kind, index) {
       id: ['id', 'buildingId', 'value'],
       name: ['buildingName', 'name', 'label'],
       code: ['buildingCode', 'code'],
+      gender: ['gender', 'buildingGender', 'genderName'],
     },
     rooms: {
       id: ['id', 'roomId', 'value'],
       name: ['roomCode', 'roomNo', 'roomNumber', 'roomName', 'name', 'label'],
       floor: ['floor', 'floorNumber'],
       maxOccupancy: ['maxOccupancy', 'maxPersons', 'maxCapacity', 'capacity'],
+      roomGender: ['roomGender', 'gender', 'genderName'],
+      roomTypeId: ['roomTypeId', 'typeId'],
       roomType: ['roomType', 'roomTypeName', 'typeName', 'type'],
     },
   }
@@ -171,6 +191,9 @@ function normalizeRow(source, kind, index) {
     code: fields.code ? pickValue(source, fields.code, '-') : '',
     floor: fields.floor ? pickValue(source, fields.floor, '-') : '',
     maxOccupancy: fields.maxOccupancy ? pickValue(source, fields.maxOccupancy, '-') : '',
+    gender: fields.gender ? pickValue(source, fields.gender, '-') : '',
+    roomGender: fields.roomGender ? pickValue(source, fields.roomGender, '-') : '',
+    roomTypeId: fields.roomTypeId ? pickValue(source, fields.roomTypeId, '') : '',
     roomType: fields.roomType ? pickValue(source, fields.roomType, '-') : '',
     source,
   }
@@ -186,7 +209,7 @@ function filteredRows(tab) {
   if (!keyword) return tab.rows
 
   return tab.rows.filter((row) => {
-    return [row.name, row.code, row.floor, row.maxOccupancy, row.roomType]
+    return [row.name, row.code, row.floor, row.maxOccupancy, row.gender, row.roomGender, row.roomType]
       .some((value) => String(value ?? '').toLowerCase().includes(keyword))
   })
 }
@@ -263,21 +286,46 @@ function resetEditorForm(tab, row = {}) {
   editor.form.code = valueOrEmpty(row.code)
   editor.form.floor = Number(row.floor) || 1
   editor.form.maxOccupancy = Number(row.maxOccupancy) || 4
+  editor.form.gender = valueOrEmpty(row.gender)
+  editor.form.roomGender = valueOrEmpty(row.roomGender)
+  editor.form.roomTypeId = valueOrEmpty(row.roomTypeId)
   editor.form.roomType = valueOrEmpty(row.roomType)
   editor.kind = tab.kind
   editor.context = tab.parentName
 }
 
-function openCreate(tab) {
+async function loadRoomTypes() {
+  if (roomTypesLoading.value || roomTypeOptions.value.length) return
+
+  roomTypesLoading.value = true
+  try {
+    const rows = unwrapList(await getRoomTypes())
+    roomTypeOptions.value = rows
+      .map((row) => {
+        const value = pickValue(row, ['id', 'roomTypeId', 'typeId', 'value'])
+        const label = pickValue(row, ['roomTypeName', 'typeName', 'name', 'label', 'roomType'])
+        return value === '' || label === '' ? null : { value, label }
+      })
+      .filter(Boolean)
+  } catch (error) {
+    ElMessage.error(requestErrorMessage(error))
+  } finally {
+    roomTypesLoading.value = false
+  }
+}
+
+async function openCreate(tab) {
   editor.mode = 'create'
   resetEditorForm(tab)
   editor.visible = true
+  if (tab.kind === 'rooms') await loadRoomTypes()
 }
 
-function openEdit(tab, row) {
+async function openEdit(tab, row) {
   editor.mode = 'edit'
   resetEditorForm(tab, row)
   editor.visible = true
+  if (tab.kind === 'rooms') await loadRoomTypes()
 }
 
 async function submitEditor() {
@@ -449,7 +497,18 @@ onMounted(() => loadTab(tabs.value[0]))
           <el-input v-model.trim="editor.form.code" maxlength="64" />
         </el-form-item>
 
-        <template v-else>
+        <el-form-item v-if="editor.kind === 'buildings'" label="性别" prop="gender">
+          <el-select v-model="editor.form.gender" placeholder="请选择楼栋性别">
+            <el-option
+              v-for="option in BUILDING_GENDER_OPTIONS"
+              :key="option.value"
+              :label="option.label"
+              :value="option.value"
+            />
+          </el-select>
+        </el-form-item>
+
+        <template v-if="editor.kind === 'rooms'">
           <div class="dialog-form-grid">
             <el-form-item label="楼层" prop="floor">
               <el-input-number v-model="editor.form.floor" :min="1" :max="100" controls-position="right" />
@@ -463,17 +522,29 @@ onMounted(() => loadTab(tabs.value[0]))
               />
             </el-form-item>
           </div>
-          <el-form-item label="寝室类型" prop="roomType">
+          <el-form-item label="房间性别" prop="roomGender">
+            <el-select v-model="editor.form.roomGender" placeholder="请选择房间性别">
+              <el-option
+                v-for="option in ROOM_GENDER_OPTIONS"
+                :key="option.value"
+                :label="option.label"
+                :value="option.value"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="房间类型" prop="roomTypeId">
             <el-select
-              v-model="editor.form.roomType"
+              v-model="editor.form.roomTypeId"
+              :loading="roomTypesLoading"
               filterable
-              allow-create
-              default-first-option
-              placeholder="请选择或输入寝室类型"
+              placeholder="请选择房间类型"
             >
-              <el-option label="男生寝室" value="男生寝室" />
-              <el-option label="女生寝室" value="女生寝室" />
-              <el-option label="混合寝室" value="混合寝室" />
+              <el-option
+                v-for="option in roomTypeOptions"
+                :key="option.value"
+                :label="option.label"
+                :value="option.value"
+              />
             </el-select>
           </el-form-item>
         </template>

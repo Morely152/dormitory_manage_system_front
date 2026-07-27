@@ -21,3 +21,7 @@ export function getRooms(buildingId) {
     params: { buildingId },
   })
 }
+
+export function getRoomTypes() {
+  return http.get('/room-management/room-types')
+}
