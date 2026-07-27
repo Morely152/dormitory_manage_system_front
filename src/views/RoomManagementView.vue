@@ -71,9 +71,9 @@ const TABLE_COLUMNS = Object.freeze({
   rooms: [
     { prop: 'name', label: '寝室号', minWidth: 170 },
     { prop: 'floor', label: '楼层', minWidth: 120 },
-    { prop: 'maxOccupancy', label: '最大人数', minWidth: 130 },
-    { prop: 'roomGender', label: '房间性别', minWidth: 130 },
-    { prop: 'roomType', label: '房间类型', minWidth: 180 },
+    { prop: 'maxOccupancy', label: '标准床位数', minWidth: 130 },
+      { prop: 'roomGender', label: '房间性别', minWidth: 130 },
+    { prop: 'roomType', label: '寝室类型', minWidth: 180 },
   ],
 })
 
@@ -177,10 +177,8 @@ function normalizeRow(source, kind, index) {
     rooms: {
       id: ['id', 'roomId', 'value'],
       name: ['roomCode', 'roomNo', 'roomNumber', 'roomName', 'name', 'label'],
-      floor: ['floor', 'floorNumber'],
-      maxOccupancy: ['maxOccupancy', 'maxPersons', 'maxCapacity', 'capacity'],
-      roomGender: ['roomGender', 'gender', 'genderName'],
-      roomTypeId: ['roomTypeId', 'typeId'],
+      floor: ['floorNo', 'floor', 'floorNumber'],
+      maxOccupancy: ['standardBedCount', 'maxOccupancy', 'maxPersons', 'maxCapacity', 'capacity'],
       roomType: ['roomType', 'roomTypeName', 'typeName', 'type'],
     },
   }
@@ -284,11 +282,8 @@ function resetEditorForm(tab, row = {}) {
   editor.form.id = row.id || ''
   editor.form.name = valueOrEmpty(row.name)
   editor.form.code = valueOrEmpty(row.code)
-  editor.form.floor = Number(row.floor) || 1
-  editor.form.maxOccupancy = Number(row.maxOccupancy) || 4
-  editor.form.gender = valueOrEmpty(row.gender)
-  editor.form.roomGender = valueOrEmpty(row.roomGender)
-  editor.form.roomTypeId = valueOrEmpty(row.roomTypeId)
+  editor.form.floor = Number.isFinite(Number(row.floor)) ? Number(row.floor) : 1
+  editor.form.maxOccupancy = Number.isFinite(Number(row.maxOccupancy)) ? Number(row.maxOccupancy) : 4
   editor.form.roomType = valueOrEmpty(row.roomType)
   editor.kind = tab.kind
   editor.context = tab.parentName
@@ -513,10 +508,10 @@ onMounted(() => loadTab(tabs.value[0]))
             <el-form-item label="楼层" prop="floor">
               <el-input-number v-model="editor.form.floor" :min="1" :max="100" controls-position="right" />
             </el-form-item>
-            <el-form-item label="最大人数" prop="maxOccupancy">
+            <el-form-item label="标准床位数" prop="maxOccupancy">
               <el-input-number
                 v-model="editor.form.maxOccupancy"
-                :min="1"
+                :min="0"
                 :max="100"
                 controls-position="right"
               />
