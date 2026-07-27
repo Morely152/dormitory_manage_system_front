@@ -376,6 +376,7 @@ async function openCreate(tab) {
   if (tab.kind === 'rooms') {
     editor.form.roomType = '学生寝室'
     await loadRoomTypes()
+    editor.form.roomTypeId = roomTypeOptions.value.find((option) => option.label === '学生寝室')?.value || ''
   }
   editor.visible = true
 }
@@ -411,7 +412,7 @@ async function submitEditor() {
       startRoomCode: editor.form.startRoomCode,
       endRoomCode: editor.form.endRoomCode,
       maxOccupancy: editor.form.maxOccupancy,
-      roomType: editor.form.roomType,
+      roomTypeId: editor.form.roomTypeId,
       gender: editor.form.roomGender,
     },
   }
@@ -709,9 +710,9 @@ onMounted(() => loadTab(tabs.value[0]))
                 </el-select>
               </el-form-item>
             </div>
-            <el-form-item label="房间类型" prop="roomType">
+            <el-form-item label="房间类型" prop="roomTypeId">
               <el-select
-                v-model="editor.form.roomType"
+                v-model="editor.form.roomTypeId"
                 :loading="roomTypesLoading"
                 filterable
                 placeholder="请选择房间类型"
@@ -720,7 +721,7 @@ onMounted(() => loadTab(tabs.value[0]))
                   v-for="option in roomTypeOptions"
                   :key="option.value"
                   :label="option.label"
-                  :value="option.label"
+                  :value="option.value"
                 />
               </el-select>
             </el-form-item>
