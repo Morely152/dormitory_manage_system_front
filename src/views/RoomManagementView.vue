@@ -143,7 +143,7 @@ const editor = reactive({
 })
 
 const editorTitle = computed(() => {
-  if (editor.mode === 'create' && editor.kind === 'rooms') return '批量新增房间'
+  if (editor.mode === 'create' && editor.kind === 'rooms') return '新增房间'
   const action = editor.mode === 'create' ? '新增' : '编辑'
   return `${action}${ENTITY_CONFIG[editor.kind].singular}`
 })
@@ -154,6 +154,7 @@ const editorRules = {
   maxOccupancy: [{ required: true, message: '请输入标准床位数', trigger: 'change' }],
   gender: [{ required: true, message: '请选择楼栋性别', trigger: 'change' }],
   roomGender: [{ required: true, message: '请选择房间性别', trigger: 'change' }],
+  roomType: [{ required: true, message: '请选择房间类型', trigger: 'change' }],
   roomTypeId: [{ required: true, message: '请选择房间类型', trigger: 'change' }],
   startRoomCode: [{ required: true, message: '请输入起始房间号', trigger: 'blur' }],
   endRoomCode: [{ required: true, message: '请输入结束房间号', trigger: 'blur' }],
@@ -372,7 +373,10 @@ async function loadRoomTypes() {
 async function openCreate(tab) {
   editor.mode = 'create'
   resetEditorForm(tab)
-  if (tab.kind === 'rooms') editor.form.roomType = '学生寝室'
+  if (tab.kind === 'rooms') {
+    editor.form.roomType = '学生寝室'
+    await loadRoomTypes()
+  }
   editor.visible = true
 }
 
@@ -452,7 +456,7 @@ async function submitEditor() {
       throw new Error(response.message || '保存失败')
     }
 
-    const action = isCreate && editor.kind === 'rooms' ? '批量新增' : isCreate ? '新增' : '修改'
+    const action = isCreate ? '新增' : '修改'
     ElMessage.success(response?.message || `${action}${ENTITY_CONFIG[editor.kind].singular}成功`)
     editor.visible = false
     await loadTab(tab)
@@ -545,7 +549,7 @@ onMounted(() => loadTab(tabs.value[0]))
                   刷新
                 </el-button>
                 <el-button type="primary" :icon="Plus" @click="openCreate(tab)">
-                  {{ tab.kind === 'rooms' ? '批量新增房间' : `新增${ENTITY_CONFIG[tab.kind].singular}` }}
+                  {{ tab.kind === 'rooms' ? '新增房间' : `新增${ENTITY_CONFIG[tab.kind].singular}` }}
                 </el-button>
               </div>
             </div>
@@ -705,8 +709,20 @@ onMounted(() => loadTab(tabs.value[0]))
                 </el-select>
               </el-form-item>
             </div>
-            <el-form-item label="房间类型">
-              <el-input :model-value="editor.form.roomType" disabled />
+            <el-form-item label="房间类型" prop="roomType">
+              <el-select
+                v-model="editor.form.roomType"
+                :loading="roomTypesLoading"
+                filterable
+                placeholder="请选择房间类型"
+              >
+                <el-option
+                  v-for="option in roomTypeOptions"
+                  :key="option.value"
+                  :label="option.label"
+                  :value="option.label"
+                />
+              </el-select>
             </el-form-item>
           </template>
 
