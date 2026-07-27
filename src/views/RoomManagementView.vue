@@ -13,7 +13,22 @@ import {
   Search,
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getBuildings, getCampuses, getRooms, getRoomTypes, getZones } from '@/api/roomManagement'
+import {
+  createBuilding,
+  createCampus,
+  createRoomsBatch,
+  createZone,
+  deleteRoom,
+  getBuildings,
+  getCampuses,
+  getRooms,
+  getRoomTypes,
+  getZones,
+  updateBuilding,
+  updateCampus,
+  updateRoom,
+  updateZone,
+} from '@/api/roomManagement'
 
 const BUILDING_GENDER_OPTIONS = Object.freeze([
   { label: '男生', value: '男生' },
@@ -48,7 +63,7 @@ const ENTITY_CONFIG = Object.freeze({
   rooms: {
     singular: '房间',
     listLabel: '房间列表',
-    nameLabel: '寝室号',
+    nameLabel: '房间号',
     childKind: null,
     icon: House,
   },
@@ -69,11 +84,11 @@ const TABLE_COLUMNS = Object.freeze({
     { prop: 'gender', label: '性别', minWidth: 120 },
   ],
   rooms: [
-    { prop: 'name', label: '寝室号', minWidth: 170 },
+    { prop: 'name', label: '房间号', minWidth: 170 },
     { prop: 'floor', label: '楼层', minWidth: 120 },
     { prop: 'maxOccupancy', label: '标准床位数', minWidth: 130 },
       { prop: 'roomGender', label: '房间性别', minWidth: 130 },
-    { prop: 'roomType', label: '寝室类型', minWidth: 180 },
+    { prop: 'roomType', label: '房间类型', minWidth: 180 },
   ],
 })
 
@@ -102,6 +117,8 @@ const activeTab = ref('campuses')
 const editorRef = ref()
 const roomTypeOptions = ref([])
 const roomTypesLoading = ref(false)
+const editorSaving = ref(false)
+const deletingRoomId = ref(null)
 const editor = reactive({
   visible: false,
   mode: 'create',
@@ -117,10 +134,16 @@ const editor = reactive({
     roomGender: '',
     roomTypeId: '',
     roomType: '',
+    startRoomCode: '',
+    endRoomCode: '',
+    managerName: '',
+    managerPhone: '',
+    floorCount: 1,
   },
 })
 
 const editorTitle = computed(() => {
+  if (editor.mode === 'create' && editor.kind === 'rooms') return '批量新增房间'
   const action = editor.mode === 'create' ? '新增' : '编辑'
   return `${action}${ENTITY_CONFIG[editor.kind].singular}`
 })
@@ -128,10 +151,13 @@ const editorTitle = computed(() => {
 const editorRules = {
   name: [{ required: true, message: '请输入名称', trigger: 'blur' }],
   floor: [{ required: true, message: '请输入楼层', trigger: 'change' }],
-  maxOccupancy: [{ required: true, message: '请输入最大人数', trigger: 'change' }],
+  maxOccupancy: [{ required: true, message: '请输入标准床位数', trigger: 'change' }],
   gender: [{ required: true, message: '请选择楼栋性别', trigger: 'change' }],
   roomGender: [{ required: true, message: '请选择房间性别', trigger: 'change' }],
   roomTypeId: [{ required: true, message: '请选择房间类型', trigger: 'change' }],
+  startRoomCode: [{ required: true, message: '请输入起始房间号', trigger: 'blur' }],
+  endRoomCode: [{ required: true, message: '请输入结束房间号', trigger: 'blur' }],
+  floorCount: [{ required: true, message: '请输入楼层数', trigger: 'change' }],
 }
 
 function pickValue(source, fields, fallback = '') {
@@ -173,12 +199,28 @@ function normalizeRow(source, kind, index) {
       name: ['buildingName', 'name', 'label'],
       code: ['buildingCode', 'code'],
       gender: ['gender', 'buildingGender', 'genderName'],
+      managerName: ['managerName', 'manager'],
+      managerPhone: ['managerPhone', 'contactPhone', 'phone'],
+      floorCount: ['floorCount', 'totalFloors'],
     },
     rooms: {
       id: ['id', 'roomId', 'value'],
       name: ['roomCode', 'roomNo', 'roomNumber', 'roomName', 'name', 'label'],
       floor: ['floorNo', 'floor', 'floorNumber'],
       maxOccupancy: ['standardBedCount', 'maxOccupancy', 'maxPersons', 'maxCapacity', 'capacity'],
+      roomGender: [
+        'roomGenderName',
+        'room_gender_name',
+        'roomGender',
+        'room_gender',
+        'genderName',
+        'gender_name',
+        'gender',
+        'genderType',
+        'genderCode',
+        'gender_code',
+      ],
+      roomTypeId: ['roomTypeId', 'typeId'],
       roomType: ['roomType', 'roomTypeName', 'typeName', 'type'],
     },
   }
@@ -193,6 +235,9 @@ function normalizeRow(source, kind, index) {
     roomGender: fields.roomGender ? pickValue(source, fields.roomGender, '-') : '',
     roomTypeId: fields.roomTypeId ? pickValue(source, fields.roomTypeId, '') : '',
     roomType: fields.roomType ? pickValue(source, fields.roomType, '-') : '',
+    managerName: fields.managerName ? pickValue(source, fields.managerName, '') : '',
+    managerPhone: fields.managerPhone ? pickValue(source, fields.managerPhone, '') : '',
+    floorCount: fields.floorCount ? pickValue(source, fields.floorCount, '') : '',
     source,
   }
   return normalized
@@ -210,6 +255,13 @@ function filteredRows(tab) {
     return [row.name, row.code, row.floor, row.maxOccupancy, row.gender, row.roomGender, row.roomType]
       .some((value) => String(value ?? '').toLowerCase().includes(keyword))
   })
+}
+
+function getTableRowClassName({ row }) {
+  const roomType = String(row.roomType ?? '').trim()
+  if (!roomType || roomType === '-') return ''
+
+  return roomType === '学生寝室' ? '' : 'non-student-room-row'
 }
 
 function compareById(rowA, rowB) {
@@ -284,7 +336,15 @@ function resetEditorForm(tab, row = {}) {
   editor.form.code = valueOrEmpty(row.code)
   editor.form.floor = Number.isFinite(Number(row.floor)) ? Number(row.floor) : 1
   editor.form.maxOccupancy = Number.isFinite(Number(row.maxOccupancy)) ? Number(row.maxOccupancy) : 4
+  editor.form.gender = valueOrEmpty(row.gender)
+  editor.form.roomGender = valueOrEmpty(row.roomGender)
+  editor.form.roomTypeId = valueOrEmpty(row.roomTypeId)
   editor.form.roomType = valueOrEmpty(row.roomType)
+  editor.form.startRoomCode = ''
+  editor.form.endRoomCode = ''
+  editor.form.managerName = valueOrEmpty(row.managerName)
+  editor.form.managerPhone = valueOrEmpty(row.managerPhone)
+  editor.form.floorCount = Number.isFinite(Number(row.floorCount)) ? Number(row.floorCount) : 1
   editor.kind = tab.kind
   editor.context = tab.parentName
 }
@@ -312,8 +372,8 @@ async function loadRoomTypes() {
 async function openCreate(tab) {
   editor.mode = 'create'
   resetEditorForm(tab)
+  if (tab.kind === 'rooms') editor.form.roomType = '学生寝室'
   editor.visible = true
-  if (tab.kind === 'rooms') await loadRoomTypes()
 }
 
 async function openEdit(tab, row) {
@@ -324,19 +384,92 @@ async function openEdit(tab, row) {
 }
 
 async function submitEditor() {
+  if (editorSaving.value) return
   const valid = await editorRef.value?.validate().catch(() => false)
   if (!valid) return
 
-  const action = editor.mode === 'create' ? '新增' : '编辑'
-  ElMessage.info(`${action}${ENTITY_CONFIG[editor.kind].singular}接口待接入`)
-  editor.visible = false
+  const tab = tabs.value.find((item) => item.key === activeTab.value)
+  if (!tab) return
+
+  const code = editor.form.code.trim()
+  const createPayloads = {
+    campuses: { name: editor.form.name, code },
+    zones: { parentId: tab.parentId, name: editor.form.name, code },
+    buildings: {
+      parentId: tab.parentId,
+      name: editor.form.name,
+      code,
+      genderName: editor.form.gender,
+      floorCount: editor.form.floorCount,
+    },
+    rooms: {
+      buildingId: tab.parentId,
+      startRoomCode: editor.form.startRoomCode,
+      endRoomCode: editor.form.endRoomCode,
+      maxOccupancy: editor.form.maxOccupancy,
+      roomType: editor.form.roomType,
+      gender: editor.form.roomGender,
+    },
+  }
+  const updatePayloads = {
+    campuses: { name: editor.form.name, code },
+    zones: { name: editor.form.name, code },
+    buildings: {
+      name: editor.form.name,
+      code,
+      managerName: editor.form.managerName,
+      managerPhone: editor.form.managerPhone,
+      genderName: editor.form.gender,
+      floorCount: editor.form.floorCount,
+    },
+    rooms: {
+      genderName: editor.form.roomGender,
+      floorNo: editor.form.floor,
+      standardBedCount: editor.form.maxOccupancy,
+      roomTypeId: editor.form.roomTypeId,
+    },
+  }
+  const createRequests = {
+    campuses: createCampus,
+    zones: createZone,
+    buildings: createBuilding,
+    rooms: createRoomsBatch,
+  }
+  const updateRequests = {
+    campuses: updateCampus,
+    zones: updateZone,
+    buildings: updateBuilding,
+    rooms: updateRoom,
+  }
+
+  editorSaving.value = true
+  try {
+    const isCreate = editor.mode === 'create'
+    const response = isCreate
+      ? await createRequests[editor.kind](createPayloads[editor.kind])
+      : await updateRequests[editor.kind](editor.form.id, updatePayloads[editor.kind])
+    if (response?.code !== undefined && response.code !== 0) {
+      throw new Error(response.message || '保存失败')
+    }
+
+    const action = isCreate && editor.kind === 'rooms' ? '批量新增' : isCreate ? '新增' : '修改'
+    ElMessage.success(response?.message || `${action}${ENTITY_CONFIG[editor.kind].singular}成功`)
+    editor.visible = false
+    await loadTab(tab)
+  } catch (error) {
+    ElMessage.error(requestErrorMessage(error))
+  } finally {
+    editorSaving.value = false
+  }
 }
 
 async function confirmDelete(tab, row) {
+  if (tab.kind !== 'rooms' || deletingRoomId.value !== null) return
+
   try {
     await ElMessageBox.confirm(
       `确定删除“${row.name}”吗？`,
-      `删除${ENTITY_CONFIG[tab.kind].singular}`,
+      '删除房间',
       {
         confirmButtonText: '删除',
         cancelButtonText: '取消',
@@ -344,9 +477,23 @@ async function confirmDelete(tab, row) {
         type: 'warning',
       },
     )
-    ElMessage.info(`删除${ENTITY_CONFIG[tab.kind].singular}接口待接入，当前数据未发生变化`)
   } catch {
-    // User cancelled the confirmation dialog.
+    return
+  }
+
+  deletingRoomId.value = row.id
+  try {
+    const response = await deleteRoom(row.id)
+    if (response?.code !== undefined && response.code !== 0) {
+      throw new Error(response.message || '删除房间失败')
+    }
+
+    ElMessage.success(response?.message || '删除房间成功')
+    await loadTab(tab)
+  } catch (error) {
+    ElMessage.error(requestErrorMessage(error))
+  } finally {
+    deletingRoomId.value = null
   }
 }
 
@@ -361,12 +508,12 @@ onMounted(() => loadTab(tabs.value[0]))
       </div>
       <div>
         <p>住宿资源</p>
-        <h1>房间信息管理</h1>
+        <h1>楼栋与寝室信息管理</h1>
         <span>校区、苑区、楼栋与房间</span>
       </div>
     </header>
 
-    <section class="management-workspace" aria-label="房间信息管理列表">
+    <section class="management-workspace" aria-label="楼栋与寝室信息管理列表">
       <el-tabs v-model="activeTab" type="card" class="resource-tabs" @tab-remove="removeTab">
         <el-tab-pane
           v-for="tab in tabs"
@@ -398,7 +545,7 @@ onMounted(() => loadTab(tabs.value[0]))
                   刷新
                 </el-button>
                 <el-button type="primary" :icon="Plus" @click="openCreate(tab)">
-                  新增{{ ENTITY_CONFIG[tab.kind].singular }}
+                  {{ tab.kind === 'rooms' ? '批量新增房间' : `新增${ENTITY_CONFIG[tab.kind].singular}` }}
                 </el-button>
               </div>
             </div>
@@ -406,6 +553,7 @@ onMounted(() => loadTab(tabs.value[0]))
             <el-table
               v-loading="tab.loading"
               :data="filteredRows(tab)"
+              :row-class-name="getTableRowClassName"
               stripe
               row-key="id"
               max-height="540"
@@ -435,7 +583,7 @@ onMounted(() => loadTab(tabs.value[0]))
                 </template>
               </el-table-column>
 
-              <el-table-column label="操作" width="128" fixed="right">
+              <el-table-column label="操作" :width="tab.kind === 'rooms' ? 128 : 72" fixed="right">
                 <template #default="scope">
                   <div class="row-actions">
                     <el-tooltip content="编辑" placement="top">
@@ -447,12 +595,13 @@ onMounted(() => loadTab(tabs.value[0]))
                         @click="openEdit(tab, scope.row)"
                       />
                     </el-tooltip>
-                    <el-tooltip content="删除" placement="top">
+                    <el-tooltip v-if="tab.kind === 'rooms'" content="删除" placement="top">
                       <el-button
                         link
                         type="danger"
                         :icon="Delete"
                         :aria-label="`删除${scope.row.name}`"
+                        :loading="deletingRoomId === scope.row.id"
                         @click="confirmDelete(tab, scope.row)"
                       />
                     </el-tooltip>
@@ -484,8 +633,16 @@ onMounted(() => loadTab(tabs.value[0]))
           <el-input :model-value="editor.context" disabled />
         </el-form-item>
 
-        <el-form-item :label="ENTITY_CONFIG[editor.kind].nameLabel" prop="name">
-          <el-input v-model.trim="editor.form.name" maxlength="64" />
+        <el-form-item
+          v-if="editor.kind !== 'rooms' || editor.mode === 'edit'"
+          :label="ENTITY_CONFIG[editor.kind].nameLabel"
+          prop="name"
+        >
+          <el-input
+            v-model.trim="editor.form.name"
+            :disabled="editor.kind === 'rooms' && editor.mode === 'edit'"
+            maxlength="64"
+          />
         </el-form-item>
 
         <el-form-item v-if="editor.kind !== 'rooms'" label="编号" prop="code">
@@ -503,51 +660,102 @@ onMounted(() => loadTab(tabs.value[0]))
           </el-select>
         </el-form-item>
 
-        <template v-if="editor.kind === 'rooms'">
+        <el-form-item v-if="editor.kind === 'buildings'" label="楼层数" prop="floorCount">
+          <el-input-number v-model="editor.form.floorCount" :min="1" :max="100" controls-position="right" />
+        </el-form-item>
+
+        <template v-if="editor.kind === 'buildings' && editor.mode === 'edit'">
           <div class="dialog-form-grid">
-            <el-form-item label="楼层" prop="floor">
-              <el-input-number v-model="editor.form.floor" :min="1" :max="100" controls-position="right" />
+            <el-form-item label="负责人">
+              <el-input v-model.trim="editor.form.managerName" maxlength="64" />
             </el-form-item>
-            <el-form-item label="标准床位数" prop="maxOccupancy">
-              <el-input-number
-                v-model="editor.form.maxOccupancy"
-                :min="0"
-                :max="100"
-                controls-position="right"
-              />
+            <el-form-item label="联系电话">
+              <el-input v-model.trim="editor.form.managerPhone" maxlength="32" />
             </el-form-item>
           </div>
-          <el-form-item label="房间性别" prop="roomGender">
-            <el-select v-model="editor.form.roomGender" placeholder="请选择房间性别">
-              <el-option
-                v-for="option in ROOM_GENDER_OPTIONS"
-                :key="option.value"
-                :label="option.label"
-                :value="option.value"
-              />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="房间类型" prop="roomTypeId">
-            <el-select
-              v-model="editor.form.roomTypeId"
-              :loading="roomTypesLoading"
-              filterable
-              placeholder="请选择房间类型"
-            >
-              <el-option
-                v-for="option in roomTypeOptions"
-                :key="option.value"
-                :label="option.label"
-                :value="option.value"
-              />
-            </el-select>
-          </el-form-item>
+        </template>
+
+        <template v-if="editor.kind === 'rooms'">
+          <template v-if="editor.mode === 'create'">
+            <div class="dialog-form-grid">
+              <el-form-item label="起始房间号" prop="startRoomCode">
+                <el-input v-model.trim="editor.form.startRoomCode" maxlength="64" />
+              </el-form-item>
+              <el-form-item label="结束房间号" prop="endRoomCode">
+                <el-input v-model.trim="editor.form.endRoomCode" maxlength="64" />
+              </el-form-item>
+            </div>
+            <div class="dialog-form-grid">
+              <el-form-item label="标准床位数" prop="maxOccupancy">
+                <el-input-number
+                  v-model="editor.form.maxOccupancy"
+                  :min="1"
+                  :max="100"
+                  controls-position="right"
+                />
+              </el-form-item>
+              <el-form-item label="房间性别" prop="roomGender">
+                <el-select v-model="editor.form.roomGender" placeholder="请选择房间性别">
+                  <el-option
+                    v-for="option in ROOM_GENDER_OPTIONS"
+                    :key="option.value"
+                    :label="option.label"
+                    :value="option.value"
+                  />
+                </el-select>
+              </el-form-item>
+            </div>
+            <el-form-item label="房间类型">
+              <el-input :model-value="editor.form.roomType" disabled />
+            </el-form-item>
+          </template>
+
+          <template v-else>
+            <div class="dialog-form-grid">
+              <el-form-item label="楼层" prop="floor">
+                <el-input-number v-model="editor.form.floor" :min="1" :max="100" controls-position="right" />
+              </el-form-item>
+              <el-form-item label="标准床位数" prop="maxOccupancy">
+                <el-input-number
+                  v-model="editor.form.maxOccupancy"
+                  :min="1"
+                  :max="100"
+                  controls-position="right"
+                />
+              </el-form-item>
+            </div>
+            <el-form-item label="房间性别" prop="roomGender">
+              <el-select v-model="editor.form.roomGender" placeholder="请选择房间性别">
+                <el-option
+                  v-for="option in ROOM_GENDER_OPTIONS"
+                  :key="option.value"
+                  :label="option.label"
+                  :value="option.value"
+                />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="房间类型" prop="roomTypeId">
+              <el-select
+                v-model="editor.form.roomTypeId"
+                :loading="roomTypesLoading"
+                filterable
+                placeholder="请选择房间类型"
+              >
+                <el-option
+                  v-for="option in roomTypeOptions"
+                  :key="option.value"
+                  :label="option.label"
+                  :value="option.value"
+                />
+              </el-select>
+            </el-form-item>
+          </template>
         </template>
       </el-form>
 
       <template #footer>
-        <el-button @click="editor.visible = false">取消</el-button>
-        <el-button type="primary" @click="submitEditor">保存</el-button>
+        <el-button :disabled="editorSaving" @click="editor.visible = false">取消</el-button>
+        <el-button type="primary" :loading="editorSaving" @click="submitEditor">保存</el-button>
       </template>
     </el-dialog>
   </div>
@@ -646,6 +854,10 @@ onMounted(() => loadTab(tabs.value[0]))
   min-height: 44px;
   margin: 0;
   font-size: 17px;
+}
+
+:deep(.el-table .non-student-room-row > td.el-table__cell) {
+  color: #bdbdbd;
 }
 
 .dialog-form-grid {

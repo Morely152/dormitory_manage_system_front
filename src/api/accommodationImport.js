@@ -19,3 +19,7 @@ export function downloadStudentAccommodationTemplate() {
     timeout: 60000,
   })
 }
+
+export function getCollegeOptions() {
+  return http.get('/imports/options/colleges')
+}

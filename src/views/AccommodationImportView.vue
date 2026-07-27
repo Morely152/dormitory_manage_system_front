@@ -12,6 +12,7 @@ import * as XLSX from 'xlsx'
 import {
   commitStudentAccommodationImport,
   downloadStudentAccommodationTemplate,
+  getCollegeOptions,
 } from '@/api/accommodationImport'
 import { getBuildings, getCampuses, getRooms, getZones } from '@/api/roomManagement'
 
@@ -32,7 +33,7 @@ const IMPORT_HEADERS = [
   '校区名称',
   '苑区名称',
   '楼栋名称',
-  '寝室号',
+  '房间号',
   '床位号',
   '班主任',
   '班主任电话',
@@ -61,6 +62,8 @@ const hasBatchResult = computed(() => Boolean(commitResult.value))
 
 const singleFormRef = ref()
 const singleLoading = ref(false)
+const collegeLoading = ref(false)
+const collegeOptions = ref([])
 const resourceLabels = new Map()
 
 const RESOURCE_LEVELS = [
@@ -101,6 +104,7 @@ onMounted(() => {
   mobileMediaQuery = window.matchMedia(MOBILE_MEDIA_QUERY)
   handleViewportChange(mobileMediaQuery)
   mobileMediaQuery.addEventListener('change', handleViewportChange)
+  loadCollegeOptions()
 })
 
 onBeforeUnmount(() => {
@@ -124,7 +128,7 @@ function createEmptySingleForm() {
     zoneName: '',
     buildingName: '',
     roomCode: '',
-    bedCode: '',
+    bedCode: null,
     teacherName: '',
     teacherPhone: '',
     counselorPhone: '',
@@ -148,6 +152,30 @@ function compareResourceRows(rowA, rowB, idFields) {
   const numberB = Number(valueB)
   if (Number.isFinite(numberA) && Number.isFinite(numberB)) return numberA - numberB
   return String(valueA ?? '').localeCompare(String(valueB ?? ''), 'zh-CN', { numeric: true })
+}
+
+async function loadCollegeOptions() {
+  collegeLoading.value = true
+  try {
+    const response = await getCollegeOptions()
+    const rows = unwrapResponse(response, '学院列表加载失败')
+    if (!Array.isArray(rows)) throw new Error('学院列表响应格式不正确')
+
+    const names = rows
+      .map((row) => {
+        if (typeof row === 'string' || typeof row === 'number') return String(row).trim()
+        return String(firstDefined(row, ['collegeName', 'name', 'label', 'value']) ?? '').trim()
+      })
+      .filter(Boolean)
+
+    collegeOptions.value = [...new Set(names)].sort((nameA, nameB) =>
+      nameA.localeCompare(nameB, 'zh-CN', { numeric: true }),
+    )
+  } catch (error) {
+    ElMessage.error(await requestErrorMessage(error, '学院列表加载失败'))
+  } finally {
+    collegeLoading.value = false
+  }
 }
 
 async function loadResourceOptions(node, resolve, reject) {
@@ -202,7 +230,7 @@ function handleResourcePathChange(path) {
 
 function validateResourcePath(_rule, value, callback) {
   if (!Array.isArray(value) || value.length !== RESOURCE_LEVELS.length) {
-    callback(new Error('请选择完整的校区、苑区、楼栋和寝室'))
+    callback(new Error('请选择完整的校区、苑区、楼栋和房间'))
     return
   }
   callback()
@@ -212,16 +240,16 @@ const singleRules = {
   studentNo: [{ required: true, message: '请输入学号', trigger: 'blur' }],
   studentName: [{ required: true, message: '请输入姓名', trigger: 'blur' }],
   gender: [{ required: true, message: '请选择性别', trigger: 'change' }],
-  collegeName: [{ required: true, message: '请输入学院名称', trigger: 'blur' }],
+  collegeName: [{ required: true, message: '请选择学院', trigger: 'change' }],
   majorName: [{ required: true, message: '请输入专业名称', trigger: 'blur' }],
   className: [{ required: true, message: '请输入班级名称', trigger: 'blur' }],
   gradeYear: [{ required: true, message: '请输入入学年级', trigger: 'change' }],
   mobile: [{ required: true, message: '请输入联系电话', trigger: 'blur' }],
   studentStatus: [{ required: true, message: '请选择学籍状态', trigger: 'change' }],
-  counselorPhone: [{ required: true, message: '请输入辅导员电话', trigger: 'blur' }],
+  counselorPhone: [{  message: '请输入辅导员电话', trigger: 'blur' }],
   accommodationStatus: [{ required: true, message: '请选择住宿状态', trigger: 'change' }],
   resourcePath: [{ validator: validateResourcePath, trigger: 'change' }],
-  bedCode: [{ required: true, message: '请输入床位号', trigger: 'blur' }],
+  bedCode: [{ required: true, message: '请选择床位号', trigger: 'change' }],
 }
 
 function unwrapResponse(response, fallbackMessage) {
@@ -429,7 +457,7 @@ function createSingleRowExcel() {
     校区名称: singleForm.campusName,
     苑区名称: singleForm.zoneName,
     楼栋名称: singleForm.buildingName,
-    寝室号: singleForm.roomCode,
+    房间号: singleForm.roomCode,
     床位号: singleForm.bedCode,
     班主任: singleForm.teacherName,
     班主任电话: singleForm.teacherPhone,
@@ -665,7 +693,19 @@ function resetSingleForm() {
               <legend>院系与管理信息</legend>
               <div class="form-grid form-grid--three">
                 <el-form-item label="学院名称" prop="collegeName">
-                  <el-input v-model.trim="singleForm.collegeName" />
+                  <el-select
+                    v-model="singleForm.collegeName"
+                    :loading="collegeLoading"
+                    filterable
+                    placeholder="请选择学院"
+                  >
+                    <el-option
+                      v-for="college in collegeOptions"
+                      :key="college"
+                      :label="college"
+                      :value="college"
+                    />
+                  </el-select>
                 </el-form-item>
                 <el-form-item label="专业名称" prop="majorName">
                   <el-input v-model.trim="singleForm.majorName" />
@@ -697,7 +737,7 @@ function resetSingleForm() {
                   </el-select>
                 </el-form-item>
                 <el-form-item
-                  label="校区 / 苑区 / 楼栋 / 寝室"
+                  label="校区 / 苑区 / 楼栋 / 房间"
                   prop="resourcePath"
                   class="resource-path-item"
                 >
@@ -714,7 +754,13 @@ function resetSingleForm() {
                   />
                 </el-form-item>
                 <el-form-item label="床位号" prop="bedCode">
-                  <el-input v-model.trim="singleForm.bedCode" />
+                  <el-input-number
+                    v-model="singleForm.bedCode"
+                    :min="1"
+                    :max="10"
+                    :precision="0"
+                    controls-position="right"
+                  />
                 </el-form-item>
               </div>
             </fieldset>

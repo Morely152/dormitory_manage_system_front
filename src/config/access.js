@@ -95,7 +95,7 @@ export const ACCESS_MODULES = Object.freeze([
     id: 'room-management',
     routeName: 'RoomManagement',
     path: '/system/rooms',
-    title: '房间信息管理',
+    title: '楼栋与寝室信息管理',
     description: '维护校区、苑区、楼栋和房间信息',
     group: '系统管理',
     icon: 'OfficeBuilding',
