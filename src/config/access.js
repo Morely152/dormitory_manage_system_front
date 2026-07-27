@@ -85,7 +85,7 @@ export const ACCESS_MODULES = Object.freeze([
     id: 'account-management',
     routeName: 'AccountManagement',
     path: '/system/accounts',
-    title: '系统账号管理',
+    title: '用户账号管理（含辅导员）',
     description: '维护系统登录账号与角色',
     group: '系统管理',
     icon: 'UserFilled',

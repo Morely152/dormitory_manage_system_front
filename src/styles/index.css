@@ -185,7 +185,7 @@ a[href] {
 }
 
 .app-main {
-  width: min(100%, 1280px);
+  width: min(100%, 2000px);
   min-height: calc(100vh - 72px);
   margin: 0 auto;
   padding: 28px clamp(20px, 4vw, 48px) 56px;
