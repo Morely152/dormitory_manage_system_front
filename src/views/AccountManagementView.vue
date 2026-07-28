@@ -62,6 +62,33 @@ function normalizeOption(item, type) {
   return { id: value(fields.id), code: value(fields.code), name: value(fields.name) }
 }
 
+function chineseNumberToInteger(value) {
+  const digits = { 零: 0, 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 }
+  if (!value.includes('十')) return digits[value] ?? Number.NaN
+
+  const [tensText, unitsText] = value.split('十')
+  const tens = tensText ? digits[tensText] : 1
+  const units = unitsText ? digits[unitsText] : 0
+  return tens === undefined || units === undefined ? Number.NaN : tens * 10 + units
+}
+
+function buildingOrder(option) {
+  const name = String(option.name || '')
+  const arabicNumber = name.match(/\d+/)?.[0]
+  if (arabicNumber) return Number(arabicNumber)
+
+  const chineseNumber = name.match(/[一二三四五六七八九十]+(?=(?:号)?(?:楼|栋))/)?.[0]
+  return chineseNumber ? chineseNumberToInteger(chineseNumber) : Number.POSITIVE_INFINITY
+}
+
+function sortBuildings(options) {
+  return options.sort((left, right) => {
+    const orderDifference = buildingOrder(left) - buildingOrder(right)
+    if (orderDifference) return orderDifference
+    return String(left.name || '').localeCompare(String(right.name || ''), 'zh-CN', { numeric: true })
+  })
+}
+
 function selectedRole() {
   return roles.value.find((role) => role.id === editor.form.roleId) || null
 }
@@ -151,7 +178,9 @@ async function loadBuildings(zoneId) {
   if (!zoneId) return
   try {
     const rows = unwrapList(await getBuildings(zoneId), '楼栋列表响应格式不正确')
-    buildings.value = rows.map((item) => normalizeOption(item, 'building')).filter((item) => item.id !== undefined)
+    buildings.value = sortBuildings(
+      rows.map((item) => normalizeOption(item, 'building')).filter((item) => item.id !== undefined),
+    )
   } catch (error) {
     ElMessage.error(requestError(error, '楼栋选项加载失败'))
   }
