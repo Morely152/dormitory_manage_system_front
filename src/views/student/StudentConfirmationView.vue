@@ -213,6 +213,24 @@ function fieldDisplayValue(field) {
   return values[field.key] || '暂无信息'
 }
 
+function isBlank(value) {
+  return String(value ?? '').trim() === ''
+}
+
+function isFieldMissing(field) {
+  if (field.type === 'textarea') return false
+
+  if (field.type === 'counselor') {
+    return isBlank(values.counselorName) || isBlank(values.counselorPhone)
+  }
+
+  if (field.type === 'contact') {
+    return isBlank(values.headTeacherName) || isBlank(values.headTeacherPhone)
+  }
+
+  return isBlank(values[field.key])
+}
+
 const editorRules = computed(() => {
   const field = currentField.value
   if (!field) return {}
@@ -571,8 +589,14 @@ async function submitCorrection() {
 }
 
 function confirmCurrentField() {
-  if (fieldStatus[currentField.value.key] !== 'modified') {
-    fieldStatus[currentField.value.key] = 'confirmed'
+  const field = currentField.value
+  if (isFieldMissing(field)) {
+    ElMessage.warning(`请先点击“有误修改”填写${field.label}`)
+    return
+  }
+
+  if (fieldStatus[field.key] !== 'modified') {
+    fieldStatus[field.key] = 'confirmed'
   }
 
   if (currentIndex.value < fields.length - 1) {

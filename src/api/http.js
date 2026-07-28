@@ -1,5 +1,6 @@
 import axios from 'axios'
-import { AUTH_STORAGE_KEY } from '@/stores/auth'
+import router from '@/router'
+import { AUTH_STORAGE_KEY, useAuthStore } from '@/stores/auth'
 
 const http = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
@@ -20,7 +21,17 @@ http.interceptors.request.use((config) => {
 })
 
 http.interceptors.response.use(
-  (response) => response.data,
+  (response) => {
+    if (response.data?.code === 40102) {
+      useAuthStore().logout()
+
+      if (router.currentRoute.value.name !== 'Login') {
+        void router.replace({ name: 'Login' })
+      }
+    }
+
+    return response.data
+  },
   (error) => Promise.reject(error),
 )
 
