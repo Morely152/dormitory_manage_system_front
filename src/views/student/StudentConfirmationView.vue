@@ -4,7 +4,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'v
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getCollegeOptions, getCounselorOptions } from '@/api/accommodationImport'
 import { getBuildings, getCampuses, getRooms, getZones } from '@/api/roomManagement'
-import { getCurrentStudentProfile } from '@/api/student'
+import { getCurrentStudentProfile, submitStudentConfirmation } from '@/api/student'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
@@ -35,6 +35,7 @@ const values = reactive({
   collegeName: firstValue(user, ['studentCollegeName', 'collegeName', 'college']),
   majorName: firstValue(user, ['studentMajorName', 'majorName', 'major']),
   className: firstValue(user, ['studentClassName', 'className', 'class']),
+  counselorId: firstValue(user, ['counselorId']),
   counselorName: firstValue(user, ['studentCounselorName', 'counselorName']),
   counselorPhone: firstValue(user, ['studentCounselorPhone', 'counselorPhone']),
   headTeacherName: firstValue(user, ['classTeacher', 'headTeacherName', 'classTeacherName']),
@@ -181,16 +182,16 @@ const isFinalized = computed(() => confirmationStatus.value === 1 || confirmatio
 const finalState = computed(() => {
   if (confirmationStatus.value === 1) {
     return {
-      title: '已提交',
-      message: '请等待辅导员确认！',
-      type: 'is-pending',
+      title: '已确认',
+      message: '感谢您的配合！',
+      type: 'is-confirmed',
     }
   }
 
   return {
-    title: '已确认',
-    message: '感谢您的配合！',
-    type: 'is-confirmed',
+    title: '已提交',
+    message: '请等待辅导员确认！',
+    type: 'is-pending',
   }
 })
 
@@ -360,6 +361,7 @@ function applyStudentProfile(profile) {
     ['collegeName', ['studentCollegeName', 'collegeName', 'college'], values.collegeName],
     ['majorName', ['studentMajorName', 'majorName', 'major'], values.majorName],
     ['className', ['studentClassName', 'className', 'class'], values.className],
+    ['counselorId', ['counselorId'], values.counselorId],
     ['counselorName', ['studentCounselorName', 'counselorName'], values.counselorName],
     ['counselorPhone', ['studentCounselorPhone', 'counselorPhone'], values.counselorPhone],
     ['headTeacherName', ['classTeacher', 'headTeacherName', 'classTeacherName'], values.headTeacherName],
@@ -572,6 +574,7 @@ async function submitCorrection() {
 
     values.counselorName = selected.name
     values.counselorPhone = selected.phone
+    values.counselorId = selected.value
   } else if (field.idKey) {
     const selected = optionState[field.type].items.find((option) => option.value === editor.value)
     if (!selected) return
@@ -647,15 +650,55 @@ function requestSubmitConfirmation() {
   submitConfirmation()
 }
 
-function submitConfirmation() {
+async function submitConfirmation() {
   if (submitting.value) return
+  if (!values.counselorId) {
+    ElMessage.warning('请选择辅导员')
+    return
+  }
 
   submitting.value = true
   try {
-    // The final confirmation endpoint will be connected when its API contract is available.
-    confirmationStatus.value = hasChanges.value ? 1 : 2
+    const result = unwrapResponse(
+      await submitStudentConfirmation({
+        counselorId: Number(values.counselorId),
+        fieldStatuses: { ...fieldStatus },
+        submittedData: {
+          studentNo: values.studentNo,
+          studentName: values.name,
+          genderName: values.gender,
+          collegeName: values.collegeName,
+          majorName: values.majorName,
+          className: values.className,
+          counselor: {
+            id: Number(values.counselorId),
+            name: values.counselorName,
+            phone: values.counselorPhone,
+          },
+          classTeacher: {
+            name: values.headTeacherName,
+            phone: values.headTeacherPhone,
+          },
+          accommodation: {
+            campusId: values.campusId || null,
+            campusName: values.campusName,
+            zoneId: values.zoneId || null,
+            zoneName: values.zoneName,
+            buildingId: values.buildingId || null,
+            buildingName: values.buildingName,
+            roomId: values.roomId || null,
+            roomCode: values.roomName,
+          },
+          remark: values.remark,
+        },
+      }),
+      '提交确认失败',
+    )
+    confirmationStatus.value = normalizeConfirmationStatus(result?.confirmationStatus)
     stopSubmitCountdown()
     ElMessage.success(finalState.value.message)
+  } catch (error) {
+    ElMessage.error(requestErrorMessage(error, '提交确认失败'))
   } finally {
     submitting.value = false
   }
