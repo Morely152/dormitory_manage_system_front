@@ -20,10 +20,10 @@ function handleCommand(command) {
 </script>
 
 <template>
-  <div class="app-layout">
+  <div class="app-layout" :class="{ 'app-layout--fullscreen': route.meta.fullscreen }">
     <a class="skip-link" href="#main-content">跳到主要内容</a>
 
-    <header class="app-header">
+    <header v-if="!route.meta.fullscreen" class="app-header">
       <RouterLink class="brand" :to="{ name: 'Portal' }" aria-label="返回宿舍床位管理系统工作台">
         <span class="brand__mark" aria-hidden="true">D</span>
         <span class="brand__text">
@@ -56,8 +56,8 @@ function handleCommand(command) {
       </div>
     </header>
 
-    <main id="main-content" class="app-main" tabindex="-1">
-      <div v-if="route.name !== 'Portal'" class="breadcrumb-wrap">
+    <main id="main-content" class="app-main" :class="{ 'app-main--fullscreen': route.meta.fullscreen }" tabindex="-1">
+      <div v-if="route.name !== 'Portal' && !route.meta.fullscreen" class="breadcrumb-wrap">
         <el-breadcrumb separator="/">
           <el-breadcrumb-item :to="{ name: 'Portal' }">工作台</el-breadcrumb-item>
           <el-breadcrumb-item>{{ route.meta.title }}</el-breadcrumb-item>
@@ -72,4 +72,3 @@ function handleCommand(command) {
     </main>
   </div>
 </template>
-

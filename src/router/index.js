@@ -20,6 +20,7 @@ const businessRoutes = ACCESS_MODULES.map((module) => {
       roles: module.roles,
       title: module.title,
       moduleId: module.id,
+      fullscreen: module.id === 'accommodation-query',
     },
   }
 })

@@ -1,7 +1,9 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { DataAnalysis, List } from '@element-plus/icons-vue'
+import { ArrowLeft, DataAnalysis, Download, List } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
+import html2canvas from 'html2canvas'
+import * as XLSX from 'xlsx'
 import { ElMessage } from 'element-plus'
 import { getCollegeOptions } from '@/api/accommodationImport'
 import { getBeds } from '@/api/beds'
@@ -17,11 +19,16 @@ const bedRows = ref([])
 const bedTableLoading = ref(false)
 const chartRows = ref([])
 const chartLoading = ref(false)
+const exportingImage = ref(false)
+const exportingExcel = ref(false)
 const chartStageRef = ref(null)
+const dashboardPageRef = ref(null)
 const collegeChartRef = ref(null)
 const locationChartRef = ref(null)
 const roomHeatmapChartRef = ref(null)
 const selectedBuildingId = ref('')
+const drilledCampusId = ref('')
+const drilledZoneId = ref('')
 
 const DASHBOARD_COLORS = Object.freeze({
   backgroundStart: '#0A1628',
@@ -108,7 +115,8 @@ const dashboardRows = computed(() => {
 })
 
 const dashboardSummary = computed(() => {
-  const totalBeds = dashboardRows.value.length
+  const rooms = buildRoomStatistics(dashboardRows.value)
+  const totalBeds = rooms.reduce((total, room) => total + room.total, 0)
   const occupiedBeds = dashboardRows.value.filter(isOccupiedBed).length
   const emptyBeds = dashboardRows.value.filter((row) => isAvailableBedStatus(row.bedStatusCode, row.bedStatus)).length
 
@@ -127,7 +135,20 @@ const collegeOccupiedDistribution = computed(() => countBy(
 ))
 
 const buildingNodes = computed(() => buildBuildingNodes(dashboardRows.value))
-const locationHierarchy = computed(() => buildLocationHierarchy(dashboardRows.value))
+const activeCampusId = computed(() => (
+  filters.campus ? getLocationKey(filters.campus, '') : drilledCampusId.value
+))
+const activeZoneId = computed(() => (
+  filters.zone ? getLocationKey(filters.zone, '') : drilledZoneId.value
+))
+const regionLevel = computed(() => (activeZoneId.value ? 'building' : (activeCampusId.value ? 'zone' : 'campus')))
+const regionDistribution = computed(() => buildRegionDistribution(
+  dashboardRows.value,
+  regionLevel.value,
+  activeCampusId.value,
+  activeZoneId.value,
+))
+const canReturnRegion = computed(() => Boolean(filters.campus || filters.zone || filters.building))
 const selectedBuilding = computed(() => buildingNodes.value.find((item) => item.id === selectedBuildingId.value))
 const selectedBuildingLabel = computed(() => selectedBuilding.value?.name || '请选择楼栋')
 const roomHeatmap = computed(() => buildRoomHeatmap(dashboardRows.value, selectedBuildingId.value))
@@ -169,6 +190,9 @@ watch(displayMode, async (mode) => {
 watch(
   filters,
   () => {
+    drilledCampusId.value = ''
+    drilledZoneId.value = ''
+    if (filters.building) selectedBuildingId.value = getLocationKey(filters.building, '')
     pagination.currentPage = 1
     if (displayMode.value === 'table') loadBedRows()
     else loadChartRows()
@@ -321,6 +345,7 @@ function normalizeBedRows(rows) {
       bedStatusCode: firstDefined(source, ['statusCode', 'bedStatusCode', 'status', 'bedStatus']) ?? bedStatus,
       bedStatus: formatBedStatus(bedStatus),
       changeType: displayValue(source, ['changeTypeName', 'changeType', 'changeTypeCode', '变动类型']),
+      standardBedCount: Number(firstDefined(source, ['standardBedCount', 'bedCount', '床位数']) || 0),
       roomId: firstDefined(source, ['roomId', 'room_id']),
       buildingId: firstDefined(source, ['buildingId', 'building_id']),
       zoneId: firstDefined(source, ['zoneId', 'zone_id']),
@@ -346,16 +371,29 @@ function buildBedQuery(page, size) {
 
 async function loadBedRows() {
   const requestVersion = ++bedRequestVersion
+  const college = filters.college
+  const needsCollegeFilter = Boolean(college)
   bedTableLoading.value = true
 
   try {
-    const data = unwrapResponse(await getBeds(buildBedQuery(pagination.currentPage - 1, pagination.pageSize)), '床位列表加载失败')
+    const data = unwrapResponse(await getBeds(
+      needsCollegeFilter ? buildBedQuery() : buildBedQuery(pagination.currentPage - 1, pagination.pageSize),
+    ), '床位列表加载失败')
     if (!Array.isArray(data?.items)) {
       throw new Error('床位分页响应格式不正确')
     }
 
     if (requestVersion !== bedRequestVersion) return
-    bedRows.value = normalizeBedRows(data.items)
+    const rows = normalizeBedRows(data.items)
+    if (needsCollegeFilter) {
+      const collegeRows = rows.filter((row) => isSameValue(row.collegeName, college))
+      const startIndex = (pagination.currentPage - 1) * pagination.pageSize
+      bedRows.value = collegeRows.slice(startIndex, startIndex + pagination.pageSize)
+      pagination.total = collegeRows.length
+      return
+    }
+
+    bedRows.value = rows
     pagination.total = Number(data.total) || 0
   } catch (error) {
     if (requestVersion === bedRequestVersion) {
@@ -402,92 +440,184 @@ function getBuildingKey(row) {
   return getLocationKey(row.buildingId, `${row.campusName}|${row.zoneName}|${row.buildingName}`)
 }
 
+function getRoomCapacity(row) {
+  const capacity = Number(row.standardBedCount)
+  return Number.isFinite(capacity) && capacity > 0 ? capacity : 0
+}
+
+function buildRoomStatistics(rows) {
+  const rooms = new Map()
+  rows.forEach((row) => {
+    const roomKey = getLocationKey(row.roomId, `${getBuildingKey(row)}|${row.roomCode}`)
+    if (!rooms.has(roomKey)) {
+      rooms.set(roomKey, {
+        roomCode: row.roomCode,
+        floor: String(row.floor),
+        campusKey: getLocationKey(row.campusId, row.campusName),
+        campusName: row.campusName,
+        zoneKey: getLocationKey(row.zoneId, `${getLocationKey(row.campusId, row.campusName)}|${row.zoneName}`),
+        zoneName: row.zoneName,
+        buildingKey: getBuildingKey(row),
+        buildingName: row.buildingName,
+        total: getRoomCapacity(row),
+        returnedBeds: 0,
+        occupied: 0,
+      })
+    }
+
+    const room = rooms.get(roomKey)
+    room.returnedBeds += 1
+    if (!room.total) room.total = getRoomCapacity(row)
+    if (isOccupiedBed(row)) room.occupied += 1
+  })
+
+  return [...rooms.values()].map((room) => ({
+    ...room,
+    total: room.total || room.returnedBeds,
+  }))
+}
+
 function buildBuildingNodes(rows) {
   const buildings = new Map()
   rows.forEach((row) => {
     const id = getBuildingKey(row)
-    if (!buildings.has(id)) buildings.set(id, { id, name: row.buildingName, value: 0 })
-    buildings.get(id).value += 1
+    if (!buildings.has(id)) buildings.set(id, { id, name: row.buildingName, value: 0, roomKeys: new Set() })
+    const building = buildings.get(id)
+    const roomKey = getLocationKey(row.roomId, `${id}|${row.roomCode}`)
+    if (building.roomKeys.has(roomKey)) return
+    building.roomKeys.add(roomKey)
+    building.value += getRoomCapacity(row) || 1
   })
   return [...buildings.values()].sort((itemA, itemB) => itemA.name.localeCompare(itemB.name, 'zh-CN', { numeric: true }))
 }
 
-function buildLocationHierarchy(rows) {
-  const campuses = new Map()
-  rows.forEach((row) => {
-    const campusKey = getLocationKey(row.campusId, row.campusName)
-    if (!campuses.has(campusKey)) campuses.set(campusKey, { key: campusKey, name: row.campusName, value: 0, zones: new Map() })
-    const campus = campuses.get(campusKey)
-    campus.value += 1
+function buildRegionDistribution(rows, level, campusId, zoneId) {
+  const regions = new Map()
+  buildRoomStatistics(rows).forEach((room) => {
+    if (level === 'zone' && room.campusKey !== campusId) return
+    if (level === 'building' && room.zoneKey !== zoneId) return
 
-    const zoneKey = getLocationKey(row.zoneId, `${campusKey}|${row.zoneName}`)
-    if (!campus.zones.has(zoneKey)) campus.zones.set(zoneKey, { key: zoneKey, name: row.zoneName, value: 0, buildings: new Map() })
-    const zone = campus.zones.get(zoneKey)
-    zone.value += 1
+    const region = level === 'campus'
+      ? { id: room.campusKey, name: room.campusName }
+      : level === 'zone'
+        ? { id: room.zoneKey, name: room.zoneName }
+        : { id: room.buildingKey, name: room.buildingName }
 
-    const buildingKey = getBuildingKey(row)
-    if (!zone.buildings.has(buildingKey)) zone.buildings.set(buildingKey, { key: buildingKey, name: row.buildingName, value: 0, rooms: new Map() })
-    const building = zone.buildings.get(buildingKey)
-    building.value += 1
+    if (!regions.has(region.id)) {
+      regions.set(region.id, {
+        ...region,
+        totalBeds: 0,
+        occupiedBeds: 0,
+        emptyBeds: 0,
+      })
+    }
 
-    const roomKey = getLocationKey(row.roomId, `${buildingKey}|${row.roomCode}`)
-    if (!building.rooms.has(roomKey)) building.rooms.set(roomKey, { key: roomKey, name: row.roomCode, value: 0 })
-    building.rooms.get(roomKey).value += 1
+    const item = regions.get(region.id)
+    item.totalBeds += room.total
+    item.occupiedBeds += room.occupied
+    item.emptyBeds += Math.max(room.total - room.occupied, 0)
   })
 
-  const makeNode = (node, nodeType, children = []) => ({
-    name: node.name,
-    value: node.value,
-    nodeType,
-    nodeId: node.key,
-    children,
+  return [...regions.values()].sort((itemA, itemB) => {
+    if (level === 'building') {
+      const idA = Number(String(itemA.id).replace(/^id:/, ''))
+      const idB = Number(String(itemB.id).replace(/^id:/, ''))
+      if (Number.isFinite(idA) && Number.isFinite(idB)) return idA - idB
+    }
+    return itemA.name.localeCompare(itemB.name, 'zh-CN', { numeric: true })
   })
-  const campusesData = [...campuses.values()].map((campus) => makeNode(campus, 'campus', [...campus.zones.values()].map((zone) => makeNode(
-    zone,
-    'zone',
-    [...zone.buildings.values()].map((building) => makeNode(
-      building,
-      'building',
-      [...building.rooms.values()].map((room) => makeNode(room, 'room')),
-    )),
-  ))))
-
-  return [{ name: '住宿区域', value: rows.length, nodeType: 'root', children: campusesData }]
 }
 
 function sortLabels(labels) {
   return [...labels].sort((itemA, itemB) => itemA.localeCompare(itemB, 'zh-CN', { numeric: true }))
 }
 
-function buildRoomHeatmap(rows, buildingId) {
-  const rooms = new Map()
-  rows.filter((row) => getBuildingKey(row) === buildingId).forEach((row) => {
-    const roomKey = getLocationKey(row.roomId, row.roomCode)
-    if (!rooms.has(roomKey)) rooms.set(roomKey, { roomCode: row.roomCode, floor: String(row.floor), total: 0, occupied: 0 })
-    const room = rooms.get(roomKey)
-    room.total += 1
-    if (isOccupiedBed(row)) room.occupied += 1
-  })
+function getRoomColumnCode(roomCode) {
+  const value = String(roomCode ?? '').trim()
+  const numericPart = value.match(/\d+$/)?.[0]
+  return numericPart ? numericPart.slice(-2).padStart(2, '0') : value
+}
 
-  const items = [...rooms.values()]
+function buildRoomHeatmap(rows, buildingId) {
+  if (!buildingId) return { floors: [], roomCodes: [], data: [] }
+
+  const items = buildRoomStatistics(rows.filter((row) => getBuildingKey(row) === buildingId))
   const floors = sortLabels([...new Set(items.map((item) => item.floor))])
-  const roomCodes = sortLabels([...new Set(items.map((item) => item.roomCode))])
+  const roomCodes = sortLabels([...new Set(items.map((item) => getRoomColumnCode(item.roomCode)))])
   const data = items.map((room) => {
     const state = room.occupied === 0 ? 0 : (room.occupied >= room.total ? 2 : 1)
-    return [roomCodes.indexOf(room.roomCode), floors.indexOf(room.floor), state, room.occupied, room.total, room.roomCode, room.floor]
+    return [roomCodes.indexOf(getRoomColumnCode(room.roomCode)), floors.indexOf(room.floor), state, room.occupied, room.total, room.roomCode, room.floor]
   })
 
   return { floors, roomCodes, data }
 }
 
+function getHeatmapLabelFontSize(roomCount) {
+  const chartWidth = roomHeatmapChartRef.value?.clientWidth || 960
+  const cellWidth = Math.max((chartWidth - 100) / Math.max(roomCount, 1), 5)
+  return Math.max(5, Math.min(12, Math.floor(cellWidth / 2.4)))
+}
+
+function getOptionValueByRegionId(options, regionId) {
+  const option = options.find((item) => getLocationKey(item.value, '') === regionId)
+  if (option) return option.value
+  return regionId.startsWith('id:') ? regionId.slice(3) : ''
+}
+
+async function syncRegionDrilldown(region) {
+  if (regionLevel.value === 'campus') {
+    const campusId = getOptionValueByRegionId(campusOptions.value, region.id)
+    if (!campusId) return
+    filters.campus = campusId
+    await handleCampusChange(campusId)
+    return
+  }
+
+  if (regionLevel.value === 'zone') {
+    const zoneId = getOptionValueByRegionId(zoneOptions.value, region.id)
+    if (!zoneId) return
+    filters.zone = zoneId
+    await handleZoneChange(zoneId)
+    return
+  }
+
+  const buildingId = getOptionValueByRegionId(buildingOptions.value, region.id)
+  if (!buildingId) return
+  selectedBuildingId.value = region.id
+  filters.building = buildingId
+  await handleBuildingChange(buildingId)
+}
+
+async function returnRegionLevel() {
+  if (filters.building) {
+    selectedBuildingId.value = ''
+    filters.building = ''
+    await handleBuildingChange('')
+    return
+  }
+
+  if (filters.zone) {
+    filters.zone = ''
+    await handleZoneChange('')
+    return
+  }
+
+  if (filters.campus) {
+    filters.campus = ''
+    await handleCampusChange('')
+  }
+}
+
 function renderDashboardCharts() {
   if (displayMode.value !== 'chart') return
 
-  if (!buildingNodes.value.some((building) => building.id === selectedBuildingId.value)) {
-    selectedBuildingId.value = buildingNodes.value[0]?.id || ''
+  const filteredBuildingId = filters.building ? getLocationKey(filters.building, '') : ''
+  if (filteredBuildingId && buildingNodes.value.some((building) => building.id === filteredBuildingId)) {
+    selectedBuildingId.value = filteredBuildingId
+  } else if (!filteredBuildingId) {
+    selectedBuildingId.value = ''
   }
 
-  const noDataColor = 'rgba(159, 179, 209, 0.28)'
   const collegeData = collegeOccupiedDistribution.value.length
     ? collegeOccupiedDistribution.value
     : [{ name: '暂无入住数据', value: 0 }]
@@ -524,48 +654,72 @@ function renderDashboardCharts() {
     }],
   }, true)
 
+  const regionData = regionDistribution.value
   locationChart = getOrCreateChart(locationChart, locationChartRef.value)
   locationChart?.off('click')
-  locationChart?.on('click', (params) => {
-    if (params.data?.nodeType !== 'building') return
-    selectedBuildingId.value = params.data.nodeId
-    renderDashboardCharts()
+  locationChart?.on('click', async (params) => {
+    const region = regionData[params.dataIndex]
+    if (!region) return
+    await syncRegionDrilldown(region)
   })
   locationChart?.setOption({
     animationDuration: 600,
     aria: { enabled: true },
     tooltip: {
-      trigger: 'item',
-      formatter: (params) => `${params.data.name}<br/>床位数：${formatNumber(params.data.value)}`,
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      formatter: (params) => {
+        const region = regionData[params[0]?.dataIndex]
+        if (!region) return ''
+        return `${region.name}<br/>总床位数：${formatNumber(region.totalBeds)} 张<br/>已住床位数：${formatNumber(region.occupiedBeds)} 张<br/>空床位数：${formatNumber(region.emptyBeds)} 张`
+      },
+    },
+    legend: {
+      top: 0,
+      icon: 'roundRect',
+      itemWidth: 13,
+      itemHeight: 8,
+      textStyle: { color: DASHBOARD_COLORS.mutedText, fontFamily: DASHBOARD_FONT },
+    },
+    grid: { top: 42, right: 18, bottom: 40, left: 52 },
+    xAxis: {
+      type: 'category',
+      data: regionData.map((item) => item.name),
+      axisLine: { lineStyle: { color: DASHBOARD_COLORS.grid } },
+      axisTick: { show: false },
+      axisLabel: {
+        color: DASHBOARD_COLORS.mutedText,
+        fontFamily: DASHBOARD_FONT,
+        formatter: (value) => (value.length > 8 ? `${value.slice(0, 8)}...` : value),
+      },
+    },
+    yAxis: {
+      type: 'value',
+      splitLine: { lineStyle: { color: DASHBOARD_COLORS.grid } },
+      axisLabel: { color: DASHBOARD_COLORS.mutedText, fontFamily: DASHBOARD_NUMBER_FONT },
     },
     series: [{
-      type: 'tree',
-      data: locationHierarchy.value,
-      top: 12,
-      left: 20,
-      bottom: 12,
-      right: 118,
-      initialTreeDepth: 3,
-      symbol: 'circle',
-      symbolSize: 8,
-      expandAndCollapse: true,
-      label: {
-        position: 'left',
-        verticalAlign: 'middle',
-        align: 'right',
-        color: DASHBOARD_COLORS.text,
-        fontFamily: DASHBOARD_FONT,
-        formatter: ({ data }) => `${data.name}  ${formatNumber(data.value)}`,
-      },
-      leaves: {
-        label: { position: 'right', align: 'left' },
-      },
-      itemStyle: { color: '#60A5FA', borderColor: '#BFDBFE' },
-      lineStyle: { color: 'rgba(96, 165, 250, 0.55)', width: 1 },
+      name: '总床位数',
+      type: 'bar',
+      data: regionData.map((item) => item.totalBeds),
+      barWidth: 30,
+      z: 1,
+      itemStyle: { color: '#93A4B8', borderRadius: [4, 4, 0, 0] },
+    }, {
+      name: '已住床位数',
+      type: 'bar',
+      data: regionData.map((item) => item.occupiedBeds),
+      barWidth: 30,
+      barGap: '-100%',
+      z: 2,
+      itemStyle: { color: DASHBOARD_COLORS.occupied, borderRadius: [4, 4, 0, 0] },
+      emphasis: { itemStyle: { color: '#60A5FA' } },
     }],
   }, true)
 
   const heatmap = roomHeatmap.value
+  const hasHeatmapData = Boolean(selectedBuildingId.value && heatmap.data.length)
+  const heatmapLabelFontSize = getHeatmapLabelFontSize(heatmap.roomCodes.length)
   roomHeatmapChart = getOrCreateChart(roomHeatmapChart, roomHeatmapChartRef.value)
   roomHeatmapChart?.setOption({
     animationDuration: 500,
@@ -577,6 +731,17 @@ function renderDashboardCharts() {
         return `楼层：${floor}<br/>寝室：${roomCode}<br/>入住人数 / 床位数：${occupied} / ${total}`
       },
     },
+    graphic: hasHeatmapData ? [] : [{
+      type: 'text',
+      left: 'center',
+      top: 'middle',
+      silent: true,
+      style: {
+        text: '请选择其中一个楼栋，以查看各寝室状态',
+        fill: DASHBOARD_COLORS.mutedText,
+        font: `16px ${DASHBOARD_FONT}`,
+      },
+    }],
     grid: { top: 14, right: 24, bottom: 56, left: 56 },
     xAxis: {
       type: 'category',
@@ -612,7 +777,7 @@ function renderDashboardCharts() {
       name: '寝室状态',
       type: 'heatmap',
       data: heatmap.data,
-      label: { show: true, color: '#091526', fontFamily: DASHBOARD_NUMBER_FONT, formatter: (params) => `${params.data[3]}/${params.data[4]}` },
+      label: { show: true, color: '#091526', fontFamily: DASHBOARD_NUMBER_FONT, fontSize: heatmapLabelFontSize, formatter: (params) => `${params.data[3]}/${params.data[4]}` },
       itemStyle: { borderColor: 'rgba(10, 22, 40, 0.85)', borderWidth: 2 },
       emphasis: { itemStyle: { borderColor: '#FFFFFF', borderWidth: 2 } },
     }],
@@ -636,6 +801,92 @@ function disposeCharts() {
   collegeChart = undefined
   locationChart = undefined
   roomHeatmapChart = undefined
+}
+
+async function exportDashboardImage() {
+  if (!dashboardPageRef.value) return
+
+  exportingImage.value = true
+  try {
+    await nextTick()
+    const canvas = await html2canvas(dashboardPageRef.value, {
+      backgroundColor: '#071326',
+      scale: Math.min(window.devicePixelRatio || 1, 2),
+      useCORS: true,
+      logging: false,
+      ignoreElements: (element) => element.dataset.exportControl === 'true',
+    })
+    const imageBlob = await new Promise((resolve, reject) => {
+      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('图片生成失败'))), 'image/png')
+    })
+    const imageUrl = URL.createObjectURL(imageBlob)
+    const anchor = document.createElement('a')
+    anchor.href = imageUrl
+    anchor.download = `赣南师范大学宿舍床位数据大屏-${new Date().toISOString().replace(/[:.]/g, '-')}.png`
+    document.body.append(anchor)
+    anchor.click()
+    anchor.remove()
+    URL.revokeObjectURL(imageUrl)
+  } catch (error) {
+    ElMessage.error(error?.message || '统计图导出失败')
+  } finally {
+    exportingImage.value = false
+  }
+}
+
+const EXCEL_COLUMNS = [
+  { label: '学号', key: 'studentNo', width: 16 },
+  { label: '姓名', key: 'studentName', width: 14 },
+  { label: '性别', key: 'gender', width: 10 },
+  { label: '学院', key: 'collegeName', width: 28 },
+  { label: '辅导员', key: 'counselorName', width: 16 },
+  { label: '辅导员电话', key: 'counselorPhone', width: 18 },
+  { label: '班主任', key: 'classTeacherName', width: 16 },
+  { label: '班主任电话', key: 'classTeacherPhone', width: 18 },
+  { label: '校区', key: 'campusName', width: 18 },
+  { label: '苑区', key: 'zoneName', width: 16 },
+  { label: '楼栋', key: 'buildingName', width: 16 },
+  { label: '楼层', key: 'floor', width: 10 },
+  { label: '寝室', key: 'roomCode', width: 12 },
+  { label: '床位', key: 'bedCode', width: 12 },
+  { label: '床位状态', key: 'bedStatus', width: 14 },
+]
+
+async function exportBedTable() {
+  if (exportingExcel.value) return
+
+  const query = buildBedQuery()
+  const college = filters.college
+  exportingExcel.value = true
+  try {
+    const data = unwrapResponse(await getBeds(query), '床位数据导出失败')
+    if (!Array.isArray(data?.items)) throw new Error('床位查询响应格式不正确')
+
+    const rows = normalizeBedRows(data.items).filter((row) => (
+      !college || isSameValue(row.collegeName, college)
+    ))
+    if (!rows.length) {
+      ElMessage.info('当前筛选条件下没有可导出的床位数据')
+      return
+    }
+
+    const headers = EXCEL_COLUMNS.map((column) => column.label)
+    const exportRows = rows.map((row) => EXCEL_COLUMNS.reduce((record, column) => {
+      record[column.label] = row[column.key]
+      return record
+    }, {}))
+    const worksheet = XLSX.utils.json_to_sheet(exportRows, { header: headers })
+    worksheet['!cols'] = EXCEL_COLUMNS.map((column) => ({ wch: column.width }))
+
+    const workbook = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(workbook, worksheet, '床位统计表')
+    XLSX.writeFile(workbook, `赣南师范大学宿舍床位统计表-${new Date().toISOString().slice(0, 10)}.xlsx`)
+    ElMessage.success(`已导出 ${rows.length} 条床位数据`)
+  } catch (error) {
+    ElMessage.error(await requestErrorMessage(error, '床位数据导出失败'))
+  } finally {
+    exportingExcel.value = false
+  }
 }
 
 function toOptions(rows, idFields, nameFields) {
@@ -781,9 +1032,9 @@ async function handleBuildingChange(buildingId) {
 </script>
 
 <template>
-  <div class="accommodation-query-page">
+  <div ref="dashboardPageRef" class="accommodation-query-page">
     <header class="board-heading">
-      <h1>赣南师范大学宿舍床位数据展板</h1>
+      <h1>{{ displayMode === 'chart' ? '赣南师范大学宿舍床位数据大屏' : '赣南师范大学宿舍床位数据统计表' }}</h1>
     </header>
 
     <section class="filter-board" aria-labelledby="filter-board-title">
@@ -872,8 +1123,8 @@ async function handleBuildingChange(buildingId) {
       <label class="filter-field">
         <span>性别</span>
         <el-select v-model="filters.gender" clearable placeholder="全部性别">
-          <el-option label="男" value="男" />
-          <el-option label="女" value="女" />
+          <el-option label="男生" value="MALE" />
+          <el-option label="女生" value="FEMALE" />
         </el-select>
       </label>
 
@@ -889,18 +1140,42 @@ async function handleBuildingChange(buildingId) {
         </el-select>
       </label>
 
-      <div class="display-switch" role="group" aria-labelledby="display-switch-title">
-        <span id="display-switch-title">数据展示</span>
-        <el-radio-group v-model="displayMode" aria-label="切换数据展示方式">
-          <el-radio-button value="chart">
-            <el-icon><DataAnalysis /></el-icon>
-            <span>统计图</span>
-          </el-radio-button>
-          <el-radio-button value="table">
-            <el-icon><List /></el-icon>
-            <span>统计表</span>
-          </el-radio-button>
-        </el-radio-group>
+      <div class="display-actions">
+        <el-button
+          v-if="displayMode === 'chart'"
+          class="export-image-button"
+          :loading="exportingImage"
+          :disabled="chartLoading"
+          data-export-control="true"
+          @click="exportDashboardImage"
+        >
+          <el-icon><Download /></el-icon>
+          导出图片
+        </el-button>
+        <el-button
+          v-else
+          class="export-image-button"
+          :loading="exportingExcel"
+          :disabled="bedTableLoading"
+          @click="exportBedTable"
+        >
+          <el-icon><Download /></el-icon>
+          导出 Excel
+        </el-button>
+
+        <div class="display-switch" role="group" aria-labelledby="display-switch-title">
+          <span id="display-switch-title">数据展示</span>
+          <el-radio-group v-model="displayMode" aria-label="切换数据展示方式">
+            <el-radio-button value="chart">
+              <el-icon><DataAnalysis /></el-icon>
+              <span>统计图</span>
+            </el-radio-button>
+            <el-radio-button value="table">
+              <el-icon><List /></el-icon>
+              <span>统计表</span>
+            </el-radio-button>
+          </el-radio-group>
+        </div>
       </div>
     </section>
 
@@ -919,9 +1194,11 @@ async function handleBuildingChange(buildingId) {
       <el-table
         v-loading="bedTableLoading"
         :data="filteredBedRows"
+        height="100%"
+        flexible
+        scrollbar-always-on
         row-key="id"
         :row-class-name="getBedRowClassName"
-        max-height="580"
         empty-text="暂无符合条件的床位数据"
       >
         <el-table-column prop="studentNo" label="学号" min-width="130" show-overflow-tooltip />
@@ -974,26 +1251,33 @@ async function handleBuildingChange(buildingId) {
         <div class="dashboard-metrics">
           <article class="dashboard-metric">
             <span>床位总数</span>
-            <strong>{{ formatNumber(dashboardSummary.totalBeds) }}</strong>
-            <small>张</small>
+            <div class="dashboard-metric-value">
+              <strong>{{ formatNumber(dashboardSummary.totalBeds) }}</strong>
+              <small>张</small>
+            </div>
           </article>
           <article class="dashboard-metric dashboard-metric--occupied">
             <span>已入住</span>
-            <strong>{{ formatNumber(dashboardSummary.occupiedBeds) }}</strong>
-            <small>张</small>
+            <div class="dashboard-metric-value">
+              <strong>{{ formatNumber(dashboardSummary.occupiedBeds) }}</strong>
+              <small>张</small>
+            </div>
           </article>
           <article class="dashboard-metric dashboard-metric--available">
             <span>空床位</span>
-            <strong>{{ formatNumber(dashboardSummary.emptyBeds) }}</strong>
-            <small>张</small>
+            <div class="dashboard-metric-value">
+              <strong>{{ formatNumber(dashboardSummary.emptyBeds) }}</strong>
+              <small>张</small>
+            </div>
           </article>
           <article
             class="dashboard-metric dashboard-metric--rate"
             :style="{ '--metric-accent': getOccupancyColor(dashboardSummary.occupancyRate) }"
           >
             <span>入住率</span>
-            <strong>{{ formatPercent(dashboardSummary.occupancyRate) }}</strong>
-            <small>已入住 / 床位总数</small>
+            <div class="dashboard-metric-value">
+              <strong>{{ formatPercent(dashboardSummary.occupancyRate) }}</strong>
+            </div>
           </article>
         </div>
 
@@ -1003,8 +1287,21 @@ async function handleBuildingChange(buildingId) {
             <div ref="collegeChartRef" class="chart-canvas" role="img" aria-label="各学院入住人数图"></div>
           </article>
           <article class="chart-panel">
-            <h3>区域床位总数</h3>
-            <div ref="locationChartRef" class="chart-canvas" role="img" aria-label="校区苑区楼栋寝室床位数层级图"></div>
+            <div class="chart-panel-heading">
+              <h3>床位分布统计图</h3>
+              <el-button
+                v-if="canReturnRegion"
+                class="chart-back-button"
+                text
+                size="small"
+                :disabled="chartLoading"
+                @click="returnRegionLevel"
+              >
+                <el-icon><ArrowLeft /></el-icon>
+                返回上层
+              </el-button>
+            </div>
+            <div ref="locationChartRef" class="chart-canvas" role="img" aria-label="各区域总床位数与已住床位数统计图"></div>
           </article>
           <article class="chart-panel chart-panel--heatmap">
             <div class="chart-panel-heading">
@@ -1022,21 +1319,39 @@ async function handleBuildingChange(buildingId) {
 <style scoped>
 
 .accommodation-query-page {
+  --screen-bg-start: #071326;
+  --screen-bg-end: #10284b;
+  --screen-panel: rgba(9, 25, 48, 0.78);
+  --screen-border: rgba(147, 197, 253, 0.24);
+  --screen-text: #e8f1ff;
+  --screen-muted: #9fb3d1;
+  box-sizing: border-box;
+  display: flex;
   width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  flex-direction: column;
+  gap: 10px;
+  padding: clamp(8px, 1.1vw, 16px) clamp(10px, 1.5vw, 24px);
+  overflow: hidden;
+  color: var(--screen-text);
+  background: linear-gradient(135deg, var(--screen-bg-start), var(--screen-bg-end));
 }
 
 .board-heading {
-  padding: 8px 0 30px;
+  flex: 0 0 auto;
+  padding: 0;
   text-align: center;
 }
 
 .board-heading h1 {
   margin: 0;
-  color: var(--color-text);
-  font-size: clamp(26px, 3.4vw, 38px);
+  color: var(--screen-text);
+  font-size: clamp(21px, 2vw, 30px);
   font-weight: bold;
   letter-spacing: 0.04em;
-  line-height: 1.35;
+  line-height: 1.2;
 }
 
 .visually-hidden {
@@ -1055,25 +1370,26 @@ async function handleBuildingChange(buildingId) {
   display: grid;
   grid-template-columns: repeat(7, minmax(96px, 1fr)) minmax(184px, auto);
   align-items: end;
-  gap: 14px;
-  padding: 20px;
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  background: var(--color-surface);
-  box-shadow: var(--shadow-sm);
+  flex: 0 0 auto;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--screen-border);
+  border-radius: 8px;
+  background: var(--screen-panel);
+  box-shadow: 0 10px 24px rgba(3, 12, 28, 0.22);
 }
 
 .filter-field {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 7px;
+  gap: 4px;
 }
 
 .filter-field > span,
 .display-switch > span {
-  color: var(--color-text-secondary);
-  font-size: 13px;
+  color: var(--screen-muted);
+  font-size: 12px;
   font-weight: 600;
 }
 
@@ -1082,19 +1398,49 @@ async function handleBuildingChange(buildingId) {
 }
 
 .filter-field :deep(.el-select__wrapper) {
-  min-height: 44px;
-  box-shadow: 0 0 0 1px var(--color-border) inset;
+  min-height: 34px;
+  color: var(--screen-text);
+  background: rgba(5, 18, 38, 0.72);
+  box-shadow: 0 0 0 1px rgba(147, 197, 253, 0.22) inset;
 }
 
 .filter-field :deep(.el-select__wrapper:hover) {
-  box-shadow: 0 0 0 1px #9eb2dc inset;
+  box-shadow: 0 0 0 1px #60a5fa inset;
+}
+
+.filter-field :deep(.el-select__selected-item),
+.filter-field :deep(.el-select__placeholder),
+.filter-field :deep(.el-select__caret) {
+  color: var(--screen-text);
 }
 
 .display-switch {
   display: flex;
   min-width: 184px;
   flex-direction: column;
-  gap: 7px;
+  gap: 4px;
+}
+
+.display-actions {
+  display: flex;
+  min-width: 280px;
+  align-items: end;
+  gap: 8px;
+}
+
+.export-image-button {
+  min-height: 34px;
+  flex: 0 0 auto;
+  border-color: rgba(147, 197, 253, 0.34);
+  color: #dbeafe;
+  background: rgba(5, 18, 38, 0.72);
+}
+
+.export-image-button:hover,
+.export-image-button:focus-visible {
+  border-color: #60a5fa;
+  color: #ffffff;
+  background: rgba(37, 99, 235, 0.45);
 }
 
 .display-switch :deep(.el-radio-group) {
@@ -1105,11 +1451,13 @@ async function handleBuildingChange(buildingId) {
 .display-switch :deep(.el-radio-button__inner) {
   display: flex;
   width: 100%;
-  min-height: 44px;
+  min-height: 34px;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  border: 1px solid var(--color-border);
+  border: 1px solid rgba(147, 197, 253, 0.22);
+  color: var(--screen-text);
+  background: rgba(5, 18, 38, 0.72);
   box-shadow: none;
 }
 
@@ -1128,16 +1476,19 @@ async function handleBuildingChange(buildingId) {
 }
 
 .data-stage {
-  min-height: 430px;
-  margin-top: 20px;
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  background: var(--color-surface);
-  box-shadow: var(--shadow-sm);
+  min-height: 0;
+  flex: 1 1 auto;
+  margin-top: 0;
+  border: 1px solid var(--screen-border);
+  border-radius: 8px;
+  background: var(--screen-panel);
+  box-shadow: 0 12px 26px rgba(3, 12, 28, 0.24);
 }
 
 .data-stage--table {
+  display: flex;
   min-height: 0;
+  flex-direction: column;
   overflow: hidden;
 }
 
@@ -1145,35 +1496,45 @@ async function handleBuildingChange(buildingId) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 76px;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--color-border);
-  background: #f8faff;
+  min-height: 52px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--screen-border);
+  background: rgba(5, 18, 38, 0.45);
 }
 
 .table-heading h2 {
   margin: 0;
-  color: var(--color-text);
-  font-size: 17px;
+  color: var(--screen-text);
+  font-size: 15px;
 }
 
 .table-heading span {
   display: inline-block;
   margin-top: 5px;
-  color: var(--color-text-muted);
-  font-size: 13px;
+  color: var(--screen-muted);
+  font-size: 12px;
 }
 
 .data-stage--table :deep(.el-table) {
+  min-height: 0;
+  flex: 1 1 auto;
+  height: 100%;
   width: 100%;
+  --el-table-bg-color: transparent;
+  --el-table-tr-bg-color: rgba(9, 25, 48, 0.74);
+  --el-table-header-bg-color: rgba(11, 34, 65, 0.96);
+  --el-table-text-color: var(--screen-text);
+  --el-table-header-text-color: #bfdbfe;
+  --el-table-border-color: rgba(147, 197, 253, 0.16);
+  --el-table-row-hover-bg-color: rgba(59, 130, 246, 0.18);
 }
 
 .data-stage--table :deep(.room-group-gray > td.el-table__cell) {
-  background-color: #f2f4f7;
+  background-color: rgba(50, 72, 105, 0.64);
 }
 
 .data-stage--table :deep(.room-group-white > td.el-table__cell) {
-  background-color: #ffffff;
+  background-color: rgba(9, 25, 48, 0.74);
 }
 
 .data-stage--table :deep(.available-bed-row > td.el-table__cell .cell) {
@@ -1192,12 +1553,21 @@ async function handleBuildingChange(buildingId) {
   min-height: 0;
   overflow: hidden;
   border-color: rgba(147, 197, 253, 0.26);
-  background: linear-gradient(135deg, var(--dashboard-bg-start), var(--dashboard-bg-end));
-  box-shadow: 0 18px 36px rgba(10, 22, 40, 0.2);
+  display: flex;
+  background: transparent;
+  box-shadow: none;
 }
 
 .dashboard-shell {
-  padding: 26px;
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+  box-sizing: border-box;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 8px;
+  padding: 12px;
   color: var(--dashboard-text);
   font-family: var(--dashboard-chinese-font);
 }
@@ -1206,8 +1576,8 @@ async function handleBuildingChange(buildingId) {
   display: flex;
   align-items: end;
   justify-content: space-between;
-  gap: 20px;
-  margin-bottom: 20px;
+  gap: 12px;
+  margin-bottom: 0;
 }
 
 .dashboard-heading p,
@@ -1216,15 +1586,13 @@ async function handleBuildingChange(buildingId) {
 }
 
 .dashboard-heading p {
-  color: #93c5fd;
-  font-size: 13px;
-  font-weight: 600;
+  display: none;
 }
 
 .dashboard-heading h2 {
-  margin-top: 5px;
+  margin-top: 0;
   color: var(--dashboard-text);
-  font-size: 22px;
+  font-size: 14px;
   letter-spacing: 0;
 }
 
@@ -1237,7 +1605,7 @@ async function handleBuildingChange(buildingId) {
 .dashboard-metrics {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 14px;
+  gap: 8px;
 }
 
 .dashboard-metric,
@@ -1248,32 +1616,39 @@ async function handleBuildingChange(buildingId) {
 }
 
 .dashboard-metric {
-  min-height: 112px;
-  padding: 18px;
+  min-height: 0;
+  padding: 10px 12px;
 }
 
-.dashboard-metric > span,
-.dashboard-metric small {
+.dashboard-metric > span {
   display: block;
   color: var(--dashboard-muted);
 }
 
 .dashboard-metric > span {
-  font-size: 13px;
+  font-size: 12px;
+}
+
+.dashboard-metric-value {
+  display: flex;
+  min-height: 25px;
+  align-items: baseline;
+  gap: 5px;
+  margin-top: 5px;
 }
 
 .dashboard-metric strong {
-  display: inline-block;
-  margin-top: 10px;
+  display: block;
+  margin: 0;
   color: #bfdbfe;
   font-family: var(--dashboard-number-font);
-  font-size: 30px;
+  font-size: 25px;
   line-height: 1;
 }
 
 .dashboard-metric small {
-  margin-top: 7px;
-  font-size: 12px;
+  color: var(--dashboard-muted);
+  font-size: 11px;
 }
 
 .dashboard-metric--occupied strong {
@@ -1291,19 +1666,24 @@ async function handleBuildingChange(buildingId) {
 .dashboard-charts {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-  margin-top: 14px;
+  min-height: 0;
+  grid-template-rows: minmax(0, 0.8fr) minmax(0, 1fr);
+  gap: 8px;
+  margin-top: 0;
 }
 
 .chart-panel {
+  display: flex;
   min-width: 0;
-  padding: 18px 18px 10px;
+  min-height: 0;
+  flex-direction: column;
+  padding: 10px 12px 6px;
 }
 
 .chart-panel h3 {
   margin: 0;
   color: var(--dashboard-text);
-  font-size: 15px;
+  font-size: 14px;
   letter-spacing: 0;
 }
 
@@ -1316,12 +1696,22 @@ async function handleBuildingChange(buildingId) {
 
 .chart-panel-heading > span {
   color: #93c5fd;
-  font-size: 13px;
+  font-size: 12px;
+}
+
+.chart-back-button {
+  --el-button-text-color: #93c5fd;
+  --el-button-hover-text-color: #dbeafe;
+  --el-button-hover-bg-color: rgba(96, 165, 250, 0.14);
+  min-height: 28px;
+  padding: 4px 7px;
 }
 
 .chart-canvas {
   width: 100%;
-  height: 300px;
+  height: auto;
+  min-height: 0;
+  flex: 1 1 auto;
 }
 
 .chart-panel--heatmap {
@@ -1329,15 +1719,16 @@ async function handleBuildingChange(buildingId) {
 }
 
 .chart-canvas--heatmap {
-  height: 380px;
+  height: auto;
 }
 
 .table-pagination {
   display: flex;
   justify-content: center;
   overflow-x: auto;
-  padding: 16px 20px;
-  border-top: 1px solid var(--color-border);
+  padding: 8px 14px;
+  border-top: 1px solid var(--screen-border);
+  min-height: 60px;
 }
 
 .table-pagination :deep(.el-pagination) {
@@ -1346,23 +1737,34 @@ async function handleBuildingChange(buildingId) {
 
 @media (max-width: 1120px) {
   .filter-board {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .display-actions {
+    grid-column: span 2;
   }
 
   .display-switch {
-    grid-column: span 3;
-    width: min(100%, 280px);
+    grid-column: auto;
+    width: auto;
   }
 
   .dashboard-metrics {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
 }
 
 @media (max-width: 640px) {
+  .accommodation-query-page {
+    height: auto;
+    min-height: 100vh;
+    min-height: 100dvh;
+    overflow: visible;
+  }
+
   .board-heading {
-    padding: 0 0 22px;
+    padding: 0;
   }
 
   .board-heading h1 {
@@ -1372,26 +1774,31 @@ async function handleBuildingChange(buildingId) {
 
   .filter-board {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 14px 12px;
-    padding: 18px 16px;
+    gap: 8px;
+    padding: 10px;
   }
 
   .display-switch {
     grid-column: span 2;
   }
 
+  .display-actions {
+    grid-column: span 2;
+    min-width: 0;
+  }
+
   .data-stage {
-    min-height: 340px;
+    min-height: 0;
   }
 
   .table-heading {
-    min-height: 68px;
-    padding: 14px 16px;
+    min-height: 52px;
+    padding: 10px;
   }
 
   .table-pagination {
     justify-content: flex-start;
-    padding: 14px 16px;
+    padding: 8px 10px;
   }
 
   .data-stage--table {
@@ -1399,7 +1806,8 @@ async function handleBuildingChange(buildingId) {
   }
 
   .dashboard-shell {
-    padding: 18px 14px;
+    height: auto;
+    padding: 10px;
   }
 
   .dashboard-heading {
@@ -1409,8 +1817,8 @@ async function handleBuildingChange(buildingId) {
   }
 
   .dashboard-metric {
-    min-height: 96px;
-    padding: 14px;
+    min-height: 0;
+    padding: 10px;
   }
 
   .dashboard-metric strong {
@@ -1419,6 +1827,7 @@ async function handleBuildingChange(buildingId) {
 
   .dashboard-charts {
     grid-template-columns: 1fr;
+    grid-template-rows: none;
   }
 
   .chart-panel--heatmap {
@@ -1427,6 +1836,7 @@ async function handleBuildingChange(buildingId) {
 
   .chart-canvas {
     height: 280px;
+    flex: none;
   }
 
   .chart-canvas--heatmap {
@@ -1440,6 +1850,11 @@ async function handleBuildingChange(buildingId) {
   }
 
   .display-switch {
+    grid-column: auto;
+    width: 100%;
+  }
+
+  .display-actions {
     grid-column: auto;
     width: 100%;
   }
