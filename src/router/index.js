@@ -5,6 +5,7 @@ import { useAuthStore } from '@/stores/auth'
 const implementedComponents = {
   'accommodation-query': () => import('@/views/AccommodationQueryView.vue'),
   'accommodation-import': () => import('@/views/AccommodationImportView.vue'),
+  'account-management': () => import('@/views/AccountManagementView.vue'),
   'room-management': () => import('@/views/RoomManagementView.vue'),
 }
 
