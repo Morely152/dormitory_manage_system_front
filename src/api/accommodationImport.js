@@ -30,3 +30,7 @@ export function downloadStudentAccommodationTemplate() {
 export function getCollegeOptions() {
   return http.get('/imports/options/colleges')
 }
+
+export function getCounselorOptions() {
+  return http.get('/imports/options/counselors')
+}

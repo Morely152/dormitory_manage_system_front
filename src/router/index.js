@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { ACCESS_MODULES } from '@/config/access'
+import { ACCESS_MODULES, ROLE_KEYS } from '@/config/access'
 import { useAuthStore } from '@/stores/auth'
 
 const implementedComponents = {
@@ -8,22 +8,25 @@ const implementedComponents = {
   'room-management': () => import('@/views/RoomManagementView.vue'),
 }
 
-const businessRoutes = ACCESS_MODULES.map((module) => {
-  const component = implementedComponents[module.id] || (() => import('@/views/FeaturePlaceholderView.vue'))
+const businessRoutes = ACCESS_MODULES.filter((module) => !module.id.startsWith('student-')).map(
+  (module) => {
+    const component =
+      implementedComponents[module.id] || (() => import('@/views/FeaturePlaceholderView.vue'))
 
-  return {
-    path: module.path,
-    name: module.routeName,
-    component,
-    meta: {
-      requiresAuth: true,
-      roles: module.roles,
-      title: module.title,
-      moduleId: module.id,
-      fullscreen: module.id === 'accommodation-query',
-    },
-  }
-})
+    return {
+      path: module.path,
+      name: module.routeName,
+      component,
+      meta: {
+        requiresAuth: true,
+        roles: module.roles,
+        title: module.title,
+        moduleId: module.id,
+        fullscreen: module.id === 'accommodation-query',
+      },
+    }
+  },
+)
 
 
 const router = createRouter({
@@ -35,6 +38,26 @@ const router = createRouter({
       name: 'Login',
       component: () => import('@/views/LoginView.vue'),
       meta: { title: '统一登录' },
+    },
+    {
+      path: '/student',
+      component: () => import('@/layouts/StudentLayout.vue'),
+      redirect: { name: 'StudentConfirmation' },
+      meta: { requiresAuth: true, roles: [ROLE_KEYS.STUDENT] },
+      children: [
+        {
+          path: 'confirmation',
+          name: 'StudentConfirmation',
+          component: () => import('@/views/student/StudentConfirmationView.vue'),
+          meta: { requiresAuth: true, roles: [ROLE_KEYS.STUDENT], title: '床位确认' },
+        },
+        {
+          path: 'bed',
+          name: 'StudentBedInformation',
+          component: () => import('@/views/student/StudentBedInformationView.vue'),
+          meta: { requiresAuth: true, roles: [ROLE_KEYS.STUDENT], title: '我的床位' },
+        },
+      ],
     },
     {
       path: '/',
@@ -80,7 +103,17 @@ router.beforeEach((to) => {
   }
 
   if (to.name === 'Login' && auth.isAuthenticated.value) {
-    return { name: 'Portal' }
+    return auth.currentRole.value === ROLE_KEYS.STUDENT
+      ? { name: 'StudentConfirmation' }
+      : { name: 'Portal' }
+  }
+
+  if (
+    auth.currentRole.value === ROLE_KEYS.STUDENT &&
+    to.meta.requiresAuth &&
+    !to.path.startsWith('/student')
+  ) {
+    return { name: 'StudentConfirmation' }
   }
 
   if (to.meta.roles && !to.meta.roles.includes(auth.currentRole.value)) {
