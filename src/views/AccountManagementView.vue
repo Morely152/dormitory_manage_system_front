@@ -268,7 +268,11 @@ async function submitEditor() {
       ? await createUser(payload())
       : await updateUser(editor.userId, payload(true))
     if (response?.code !== undefined && response.code !== 0) throw new Error(response.message || '保存失败')
-    ElMessage.success(editor.mode === 'create' ? '账号创建成功' : '账号保存成功')
+    ElMessage.success(
+      editor.mode === 'create'
+        ? '账号创建成功'
+        : '账号保存成功，初始密码已按当前姓名和工号重置',
+    )
     editor.visible = false
     await loadUsers()
   } catch (error) {
@@ -365,6 +369,14 @@ onMounted(async () => {
 
     <el-dialog v-model="editor.visible" :title="editorTitle" class="account-editor-dialog" width="560px" destroy-on-close @closed="formRef?.clearValidate()">
       <el-form ref="formRef" :model="editor.form" :rules="formRules" label-position="top" @submit.prevent="submitEditor">
+        <el-alert
+          v-if="editor.mode === 'edit'"
+          class="password-reset-notice"
+          title="保存修改后，系统将按当前姓名和工号重置该账号的初始密码。"
+          type="warning"
+          :closable="false"
+          show-icon
+        />
         <div class="dialog-form-grid">
           <el-form-item label="工号 / 登录账号" prop="userCode">
             <el-input v-model.trim="editor.form.userCode" maxlength="64" />
@@ -467,6 +479,10 @@ onMounted(async () => {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
+}
+
+.password-reset-notice {
+  margin-bottom: 18px;
 }
 
 .scope-fieldset {
