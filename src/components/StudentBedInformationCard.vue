@@ -6,13 +6,21 @@ defineProps({
     type: String,
     required: true,
   },
+  headingId: {
+    type: String,
+    default: 'bed-information-title',
+  },
+  icon: {
+    type: Object,
+    default: () => OfficeBuilding,
+  },
   description: {
     type: String,
     default: '',
   },
   status: {
     type: String,
-    required: true,
+    default: '',
   },
   fields: {
     type: Array,
@@ -22,16 +30,16 @@ defineProps({
 </script>
 
 <template>
-  <section class="bed-information-card" aria-labelledby="bed-information-title">
+  <section class="bed-information-card" :aria-labelledby="headingId">
     <header class="bed-information-card__header">
       <span class="bed-information-card__icon" aria-hidden="true">
-        <el-icon><OfficeBuilding /></el-icon>
+        <el-icon><component :is="icon" /></el-icon>
       </span>
       <div class="bed-information-card__heading">
-        <h2 id="bed-information-title">{{ title }}</h2>
+        <h2 :id="headingId">{{ title }}</h2>
         <p v-if="description">{{ description }}</p>
       </div>
-      <span class="bed-information-card__status">{{ status }}</span>
+      <span v-if="status" class="bed-information-card__status">{{ status }}</span>
     </header>
 
     <dl class="bed-information-list">

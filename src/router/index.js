@@ -6,6 +6,8 @@ const implementedComponents = {
   'accommodation-query': () => import('@/views/AccommodationQueryView.vue'),
   'accommodation-import': () => import('@/views/AccommodationImportView.vue'),
   'account-management': () => import('@/views/AccountManagementView.vue'),
+  'error-information-correction-review': () =>
+    import('@/views/ErrorInformationCorrectionReviewView.vue'),
   'room-management': () => import('@/views/RoomManagementView.vue'),
 }
 

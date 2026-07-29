@@ -35,4 +35,3 @@ const description = computed(() =>
     </section>
   </div>
 </template>
-

@@ -1,10 +1,11 @@
 <script setup>
 import { ArrowLeft, CircleCheck, EditPen, Loading, Select, Warning } from '@element-plus/icons-vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { getCollegeOptions, getCounselorOptions } from '@/api/accommodationImport'
 import { getBuildings, getCampuses, getRooms, getZones } from '@/api/roomManagement'
 import { getCurrentStudentProfile, submitStudentConfirmation } from '@/api/student'
+import StudentInformationWarningDialog from '@/components/StudentInformationWarningDialog.vue'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
@@ -640,10 +641,7 @@ function startSubmitCountdown() {
 
 function requestSubmitConfirmation() {
   if (submitCountdown.value > 0) {
-    ElMessageBox.alert('请仔细核对是否无误', '提示', {
-      confirmButtonText: '我知道了',
-      type: 'warning',
-    })
+    ElMessage.warning(`请仔细检查，${submitCountdown.value}秒后可提交`)
     return
   }
 
@@ -710,6 +708,8 @@ onBeforeUnmount(stopSubmitCountdown)
 
 <template>
   <div class="confirmation-page">
+    <StudentInformationWarningDialog />
+
     <section class="confirmation-steps" aria-label="信息确认进度">
       <el-steps :active="activeStep" finish-status="success" align-center>
         <el-step title="确认个人信息" />
