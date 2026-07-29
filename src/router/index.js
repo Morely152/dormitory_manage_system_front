@@ -12,6 +12,8 @@ const implementedComponents = {
   'accommodation-delete': () => import('@/views/AccommodationDeleteView.vue'),
   'change-application': () => import('@/views/AccommodationChangeApplicationView.vue'),
   'change-review': () => import('@/views/AccommodationChangeReviewView.vue'),
+  'operation-log': () => import('@/views/OperationLogView.vue'),
+  'accommodation-change-log': () => import('@/views/AccommodationChangeLogView.vue'),
 }
 
 const businessRoutes = ACCESS_MODULES.filter((module) => !module.id.startsWith('student-')).map(
