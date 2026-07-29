@@ -5,3 +5,7 @@ export function getCounselorConfirmationRequests(view) {
     params: view ? { view } : undefined,
   })
 }
+
+export function reviewCounselorConfirmationRequest(studentId, approvalRequest) {
+  return http.post(`/counselor/confirmation-requests/${studentId}/approve`, approvalRequest)
+}

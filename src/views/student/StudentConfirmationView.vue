@@ -16,6 +16,7 @@ const preparingEditor = ref(false)
 const profileLoading = ref(true)
 const submitting = ref(false)
 const confirmationStatus = ref(0)
+const review = ref(null)
 const submitCountdown = ref(0)
 let submitCountdownTimer
 
@@ -175,11 +176,27 @@ const genderOptions = [
 ]
 
 const currentField = computed(() => fields[currentIndex.value])
-const activeStep = computed(() => (completed.value || isFinalized.value ? 3 : currentField.value.step))
+const activeStep = computed(() =>
+  completed.value || isFinalized.value || review.value ? 3 : currentField.value.step,
+)
 const progressText = computed(() => `${currentIndex.value + 1} / ${fields.length}`)
 const editorLoading = computed(() => optionState[currentField.value?.type]?.loading || false)
 const hasChanges = computed(() => fields.some((field) => fieldStatus[field.key] === 'modified'))
 const isFinalized = computed(() => confirmationStatus.value === 1 || confirmationStatus.value === 2)
+const reviewResult = computed(() => {
+  if (!review.value) return null
+
+  const approved = review.value.approved === true
+  const reviewRemark = String(review.value.reviewRemark || '').trim() || '无'
+  return {
+    approved,
+    title: approved ? '辅导员已通过审批' : '辅导员已驳回修改',
+    message: approved
+      ? `辅导员已通过审批，感谢您的配合！备注：${reviewRemark}`
+      : `辅导员已驳回修改，备注：${reviewRemark}`,
+    type: approved ? 'is-confirmed' : 'is-pending',
+  }
+})
 const finalState = computed(() => {
   if (confirmationStatus.value === 1) {
     return {
@@ -345,6 +362,11 @@ function normalizeConfirmationStatus(value) {
   return status === 1 || status === 2 ? status : 0
 }
 
+function normalizeReview(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  return Object.keys(value).length ? value : null
+}
+
 function applyStudentProfile(profile) {
   const sources = [
     profile,
@@ -382,6 +404,7 @@ function applyStudentProfile(profile) {
     values[key] = profileValue(sources, aliases, fallback)
   })
   values.gender = normalizeGender(values.gender)
+  review.value = normalizeReview(profileValue(sources, ['review'], profile?.review || review.value))
   confirmationStatus.value = normalizeConfirmationStatus(
     profileValue(sources, ['confirmationStatus'], confirmationStatus.value),
   )
@@ -622,6 +645,17 @@ function returnToReview() {
   completed.value = false
 }
 
+function restartConfirmation() {
+  stopSubmitCountdown()
+  currentIndex.value = 0
+  completed.value = false
+  confirmationStatus.value = 0
+  review.value = null
+  fields.forEach((field) => {
+    fieldStatus[field.key] = 'pending'
+  })
+}
+
 function stopSubmitCountdown() {
   if (submitCountdownTimer) {
     clearInterval(submitCountdownTimer)
@@ -722,6 +756,30 @@ onBeforeUnmount(stopSubmitCountdown)
       <section v-if="profileLoading" key="loading" class="confirmation-card confirmation-card--loading">
         <el-icon class="confirmation-loading__icon" aria-hidden="true"><Loading /></el-icon>
         <p role="status">正在加载学生信息</p>
+      </section>
+
+      <section
+        v-else-if="reviewResult"
+        key="review-result"
+        class="confirmation-card confirmation-card--completed"
+      >
+        <div class="confirmation-complete__icon" :class="reviewResult.type" aria-hidden="true">
+          <el-icon>
+            <CircleCheck v-if="reviewResult.approved" />
+            <Warning v-else />
+          </el-icon>
+        </div>
+        <h1>{{ reviewResult.title }}</h1>
+        <p role="status">{{ reviewResult.message }}</p>
+        <el-button
+          v-if="!reviewResult.approved"
+          type="danger"
+          size="large"
+          :icon="EditPen"
+          @click="restartConfirmation"
+        >
+          重新确认
+        </el-button>
       </section>
 
       <section
@@ -1112,6 +1170,11 @@ onBeforeUnmount(stopSubmitCountdown)
   margin: 12px 0 0;
   color: var(--color-text-secondary);
   line-height: 1.7;
+}
+
+.confirmation-card--completed .el-button {
+  min-height: 44px;
+  margin-top: 24px;
 }
 
 .confirmation-loading__icon {

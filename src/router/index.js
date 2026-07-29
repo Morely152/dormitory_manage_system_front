@@ -9,6 +9,9 @@ const implementedComponents = {
   'error-information-correction-review': () =>
     import('@/views/ErrorInformationCorrectionReviewView.vue'),
   'room-management': () => import('@/views/RoomManagementView.vue'),
+  'accommodation-delete': () => import('@/views/AccommodationDeleteView.vue'),
+  'change-application': () => import('@/views/AccommodationChangeApplicationView.vue'),
+  'change-review': () => import('@/views/AccommodationChangeReviewView.vue'),
 }
 
 const businessRoutes = ACCESS_MODULES.filter((module) => !module.id.startsWith('student-')).map(
@@ -78,6 +81,14 @@ const router = createRouter({
           meta: { requiresAuth: true, title: '工作台' },
         },
         ...businessRoutes,
+        {
+          path: 'accommodation/edit',
+          redirect: { name: 'ChangeApplication' },
+          meta: {
+            requiresAuth: true,
+            roles: [ROLE_KEYS.SYSTEM_ADMIN, ROLE_KEYS.DORMITORY_ADMIN, ROLE_KEYS.COUNSELOR],
+          },
+        },
         {
           path: '403',
           name: 'Forbidden',

@@ -9,9 +9,12 @@ import {
   Select,
 } from '@element-plus/icons-vue'
 import { computed, onMounted, reactive, ref, shallowRef, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import StudentInformationWarningDialog from '@/components/StudentInformationWarningDialog.vue'
-import { getCounselorConfirmationRequests } from '@/api/counselor'
+import {
+  getCounselorConfirmationRequests,
+  reviewCounselorConfirmationRequest,
+} from '@/api/counselor'
 
 const loading = ref(false)
 const activeView = ref('all')
@@ -20,6 +23,7 @@ const currentPage = ref(1)
 const pageSize = ref(10)
 const selectedCollege = ref('')
 const selectedGradeYear = ref('')
+const reviewingStudentId = ref(null)
 const counts = reactive({ all: null, pending: null, error: null })
 let latestRequestId = 0
 
@@ -57,6 +61,13 @@ function unwrapList(response, fallbackMessage) {
   const data = response?.data ?? response
   if (!Array.isArray(data)) throw new Error(fallbackMessage)
   return data
+}
+
+function unwrapResponse(response, fallbackMessage) {
+  if (response?.code !== undefined && response.code !== 0) {
+    throw new Error(response.message || fallbackMessage)
+  }
+  return response?.data ?? response
 }
 
 function requestErrorMessage(error, fallback) {
@@ -356,8 +367,48 @@ async function loadInitialRequests() {
   }
 }
 
-function reviewRequest(action, record) {
-  ElMessage.info(`${action}${record.studentName || record.studentNo}的审核接口待接入`)
+async function reviewRequest(approved, record) {
+  const action = approved ? '通过' : '驳回'
+  let reviewRemark = ''
+
+  try {
+    const result = await ElMessageBox.prompt('请填写本次审核备注（可不填）', `${action}确认修改`, {
+      confirmButtonText: `确认${action}`,
+      cancelButtonText: '取消',
+      inputType: 'textarea',
+      inputPlaceholder: '请输入审核备注（可选）',
+      inputValue: '',
+      closeOnClickModal: false,
+    })
+    reviewRemark = String(result.value || '').trim()
+  } catch (reason) {
+    if (reason === 'cancel' || reason === 'close') return
+    return
+  }
+
+  const studentId = record.studentId ?? record.id
+  if (studentId === undefined || studentId === null || studentId === '') {
+    ElMessage.error('缺少学生标识，无法提交审核')
+    return
+  }
+
+  reviewingStudentId.value = record.id
+  try {
+    unwrapResponse(
+      await reviewCounselorConfirmationRequest(studentId, { approved, reviewRemark }),
+      `${action}审核失败`,
+    )
+    ElMessage.success(`已${action}${record.studentName || record.studentNo}的确认修改`)
+
+    if (activeView.value !== 'error' && counts.error !== null) {
+      counts.error = Math.max(0, counts.error - 1)
+    }
+    await loadRequests()
+  } catch (error) {
+    ElMessage.error(requestErrorMessage(error, `${action}审核失败`))
+  } finally {
+    reviewingStudentId.value = null
+  }
 }
 
 function handlePageSizeChange() {
@@ -402,8 +453,8 @@ watch(selectedGradeYear, () => {
         @click="activeView = 'all'"
       >
         <span class="confirmation-review-summary__label">
-          <b>全部学生</b>
-          <em>包含所有未填写辅导员的学生，<br/>请检查是否有您分管学院的学生尚未确认</em>
+          <b>全部待确认学生</b>
+          <em>包含所有未填写辅导员的学生，请检查其中是否有您分管学院的学生尚未确认</em>
         </span>
         <strong>{{ displayCount('all') }}</strong>
       </button>
@@ -413,7 +464,7 @@ watch(selectedGradeYear, () => {
         type="button"
         @click="activeView = 'pending'"
       >
-        <span>尚未确认</span>
+        <span>分管学院</span>
         <strong>{{ displayCount('pending') }}</strong>
       </button>
       <button
@@ -551,10 +602,24 @@ watch(selectedGradeYear, () => {
           <el-table-column label="审核操作" width="192" fixed="right">
             <template #default="{ row }">
               <div v-if="row.canReview" class="confirmation-review-actions">
-                <el-button type="success" size="small" :icon="Select" @click="reviewRequest('通过', row)">
+                <el-button
+                  type="success"
+                  size="small"
+                  :icon="Select"
+                  :loading="reviewingStudentId === row.id"
+                  :disabled="reviewingStudentId !== null"
+                  @click="reviewRequest(true, row)"
+                >
                   通过
                 </el-button>
-                <el-button type="danger" size="small" :icon="Close" @click="reviewRequest('驳回', row)">
+                <el-button
+                  type="danger"
+                  size="small"
+                  :icon="Close"
+                  :loading="reviewingStudentId === row.id"
+                  :disabled="reviewingStudentId !== null"
+                  @click="reviewRequest(false, row)"
+                >
                   驳回
                 </el-button>
               </div>
@@ -581,7 +646,7 @@ watch(selectedGradeYear, () => {
             </div>
             <el-tag :type="row.status.type" effect="light">{{ row.status.label }}</el-tag>
           </header>
-          <section>
+          <section v-if="row.canReview">
             <h4>确认信息</h4>
             <dl>
               <div
@@ -600,8 +665,24 @@ watch(selectedGradeYear, () => {
             </dl>
           </section>
           <footer v-if="row.canReview" class="confirmation-review-actions">
-            <el-button type="success" :icon="Select" @click="reviewRequest('通过', row)">通过</el-button>
-            <el-button type="danger" :icon="Close" @click="reviewRequest('驳回', row)">驳回</el-button>
+            <el-button
+              type="success"
+              :icon="Select"
+              :loading="reviewingStudentId === row.id"
+              :disabled="reviewingStudentId !== null"
+              @click="reviewRequest(true, row)"
+            >
+              通过
+            </el-button>
+            <el-button
+              type="danger"
+              :icon="Close"
+              :loading="reviewingStudentId === row.id"
+              :disabled="reviewingStudentId !== null"
+              @click="reviewRequest(false, row)"
+            >
+              驳回
+            </el-button>
           </footer>
         </article>
       </div>
