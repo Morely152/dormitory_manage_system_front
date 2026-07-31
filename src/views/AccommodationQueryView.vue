@@ -117,15 +117,21 @@ const dashboardRows = computed(() => {
 const dashboardSummary = computed(() => {
   const rooms = buildRoomStatistics(dashboardRows.value)
   const totalBeds = rooms.reduce((total, room) => total + room.total, 0)
-  const occupiedBeds = dashboardRows.value.filter(isOccupiedBed).length
-  const emptyBeds = dashboardRows.value.filter((row) => isAvailableBedStatus(row.bedStatusCode, row.bedStatus)).length
+  const occupiedBeds = rooms.reduce((total, room) => total + room.occupied, 0)
+  const emptyBeds = Math.max(totalBeds - occupiedBeds, 0)
+  const emptyRooms = rooms.filter((room) => room.occupied === 0)
+  const emptyRoomCount = emptyRooms.length
+  const emptyRoomBeds = emptyRooms.reduce((total, room) => total + room.total, 0)
 
   return {
     totalBeds,
     occupiedBeds,
     emptyBeds,
-    unavailableBeds: Math.max(totalBeds - occupiedBeds - emptyBeds, 0),
+    unavailableBeds: 0,
     occupancyRate: totalBeds ? (occupiedBeds / totalBeds) * 100 : 0,
+    roomCount: rooms.length,
+    emptyRoomCount,
+    emptyRoomBeds,
   }
 })
 
@@ -133,6 +139,17 @@ const collegeOccupiedDistribution = computed(() => countBy(
   dashboardRows.value.filter(isOccupiedBed),
   (row) => (row.collegeName === '-' ? '未标注学院' : row.collegeName),
 ))
+
+// 空床位筛选下，左侧图改用位置维度分布（空床位无学院归属）
+const emptyBedLocationDistribution = computed(() => {
+  if (filters.status !== 'AVAILABLE') return []
+  const emptyRows = dashboardRows.value.filter((row) => isAvailableBedStatus(row.bedStatusCode, row.bedStatus))
+  // 已选具体楼栋时降级为各楼层；否则按楼栋聚合
+  const getKey = filters.building
+    ? (row) => (String(row.floor ?? '').trim() || '未知楼层')
+    : (row) => (String(row.buildingName ?? '').trim() || '未知楼栋')
+  return countBy(emptyRows, getKey)
+})
 
 const buildingNodes = computed(() => buildBuildingNodes(dashboardRows.value))
 const activeCampusId = computed(() => (
@@ -446,6 +463,7 @@ function getRoomCapacity(row) {
 }
 
 function buildRoomStatistics(rows) {
+  const status = filters.status
   const rooms = new Map()
   rows.forEach((row) => {
     const roomKey = getLocationKey(row.roomId, `${getBuildingKey(row)}|${row.roomCode}`)
@@ -460,21 +478,27 @@ function buildRoomStatistics(rows) {
         buildingKey: getBuildingKey(row),
         buildingName: row.buildingName,
         total: getRoomCapacity(row),
-        returnedBeds: 0,
+        returnedCount: 0,
         occupied: 0,
       })
     }
 
     const room = rooms.get(roomKey)
-    room.returnedBeds += 1
-    if (!room.total) room.total = getRoomCapacity(row)
+    room.returnedCount += 1
     if (isOccupiedBed(row)) room.occupied += 1
   })
 
-  return [...rooms.values()].map((room) => ({
-    ...room,
-    total: room.total || room.returnedBeds,
-  }))
+  return [...rooms.values()].map((room) => {
+    const total = room.total || room.returnedCount
+    let occupied = room.occupied
+    if (status === 'AVAILABLE') {
+      occupied = Math.max(total - room.returnedCount, 0)
+    } else if (status === 'OCCUPIED') {
+      occupied = room.returnedCount
+    }
+    const { returnedCount, ...rest } = room
+    return { ...rest, total, occupied }
+  })
 }
 
 function buildBuildingNodes(rows) {
@@ -618,14 +642,23 @@ function renderDashboardCharts() {
     selectedBuildingId.value = ''
   }
 
-  const collegeData = collegeOccupiedDistribution.value.length
-    ? collegeOccupiedDistribution.value
-    : [{ name: '暂无入住数据', value: 0 }]
+  const isAvailableMode = filters.status === 'AVAILABLE'
+  const leftChartData = isAvailableMode
+    ? (emptyBedLocationDistribution.value.length
+        ? emptyBedLocationDistribution.value
+        : [{ name: '暂无空床位数据', value: 0 }])
+    : (collegeOccupiedDistribution.value.length
+        ? collegeOccupiedDistribution.value
+        : [{ name: '暂无入住数据', value: 0 }])
+  const leftChartUnit = isAvailableMode ? '张' : '人'
+  const leftBarColors = isAvailableMode
+    ? [{ offset: 0, color: '#B45309' }, { offset: 1, color: '#F5A524' }]
+    : [{ offset: 0, color: '#2563EB' }, { offset: 1, color: '#60A5FA' }]
   collegeChart = getOrCreateChart(collegeChart, collegeChartRef.value)
   collegeChart?.setOption({
     animationDuration: 600,
     aria: { enabled: true },
-    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, valueFormatter: (value) => `${formatNumber(value)} 人` },
+    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, valueFormatter: (value) => `${formatNumber(value)} ${leftChartUnit}` },
     grid: { top: 12, right: 44, bottom: 18, left: 132 },
     xAxis: {
       type: 'value',
@@ -634,22 +667,19 @@ function renderDashboardCharts() {
     },
     yAxis: {
       type: 'category',
-      data: collegeData.map((item) => item.name).reverse(),
+      data: leftChartData.map((item) => item.name).reverse(),
       axisLine: { show: false },
       axisTick: { show: false },
       axisLabel: { color: DASHBOARD_COLORS.text, fontFamily: DASHBOARD_FONT, width: 112, overflow: 'truncate' },
     },
     series: [{
       type: 'bar',
-      data: collegeData.map((item) => item.value).reverse(),
+      data: leftChartData.map((item) => item.value).reverse(),
       barMaxWidth: 24,
       label: { show: true, position: 'right', color: DASHBOARD_COLORS.text, fontFamily: DASHBOARD_NUMBER_FONT },
       itemStyle: {
         borderRadius: [0, 5, 5, 0],
-        color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
-          { offset: 0, color: '#2563EB' },
-          { offset: 1, color: '#60A5FA' },
-        ]),
+        color: new echarts.graphic.LinearGradient(0, 0, 1, 0, leftBarColors),
       },
     }],
   }, true)
@@ -1279,11 +1309,32 @@ async function handleBuildingChange(buildingId) {
               <strong>{{ formatPercent(dashboardSummary.occupancyRate) }}</strong>
             </div>
           </article>
+          <article class="dashboard-metric dashboard-metric--room">
+            <span>宿舍总数</span>
+            <div class="dashboard-metric-value">
+              <strong>{{ formatNumber(dashboardSummary.roomCount) }}</strong>
+              <small>间</small>
+            </div>
+          </article>
+          <article class="dashboard-metric dashboard-metric--empty-room">
+            <span>全空房间数</span>
+            <div class="dashboard-metric-value">
+              <strong>{{ formatNumber(dashboardSummary.emptyRoomCount) }}</strong>
+              <small>间</small>
+            </div>
+          </article>
+          <article class="dashboard-metric dashboard-metric--empty-room-beds">
+            <span>全空房间床位数</span>
+            <div class="dashboard-metric-value">
+              <strong>{{ formatNumber(dashboardSummary.emptyRoomBeds) }}</strong>
+              <small>张</small>
+            </div>
+          </article>
         </div>
 
         <div class="dashboard-charts">
           <article class="chart-panel">
-            <h3>各学院入住人数</h3>
+            <h3>{{ filters.status === 'AVAILABLE' ? (filters.building ? '各楼层空床位数' : '各楼栋空床位数') : '各学院入住人数' }}</h3>
             <div ref="collegeChartRef" class="chart-canvas" role="img" aria-label="各学院入住人数图"></div>
           </article>
           <article class="chart-panel">
@@ -1604,7 +1655,7 @@ async function handleBuildingChange(buildingId) {
 
 .dashboard-metrics {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -1661,6 +1712,15 @@ async function handleBuildingChange(buildingId) {
 
 .dashboard-metric--rate strong {
   color: var(--metric-accent);
+}
+
+.dashboard-metric--room strong {
+  color: #a5b4fc;
+}
+
+.dashboard-metric--empty-room strong,
+.dashboard-metric--empty-room-beds strong {
+  color: #36d399;
 }
 
 .dashboard-charts {
@@ -1750,7 +1810,7 @@ async function handleBuildingChange(buildingId) {
   }
 
   .dashboard-metrics {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(7, minmax(0, 1fr));
   }
 
 }
@@ -1819,6 +1879,10 @@ async function handleBuildingChange(buildingId) {
   .dashboard-metric {
     min-height: 0;
     padding: 10px;
+  }
+
+  .dashboard-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .dashboard-metric strong {

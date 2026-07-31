@@ -171,10 +171,10 @@ async function submit() {
           </p>
         </section>
 
-        <section class="faq-section" aria-labelledby="support-group-title">
+        <!-- <section class="faq-section" aria-labelledby="support-group-title">
           <h3 id="support-group-title">2. 客服群</h3>
           <p>如有登录以及其他方面的问题，请进入 QQ 群（群号 <code>123456</code>）反馈。</p>
-        </section>
+        </section> -->
       </div>
 
       <template #footer>
