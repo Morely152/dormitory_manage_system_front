@@ -16,8 +16,18 @@ const state = reactive({
   session: readSession(),
 })
 
+function isTokenValid(session) {
+  if (!session?.token) {
+    return false
+  }
+  if (!session.expiresAt) {
+    return true
+  }
+  return new Date(session.expiresAt).getTime() > Date.now()
+}
+
 export function useAuthStore() {
-  const isAuthenticated = computed(() => Boolean(state.session?.token))
+  const isAuthenticated = computed(() => isTokenValid(state.session))
   const currentUser = computed(() => state.session?.user || null)
   const currentRole = computed(() => state.session?.user?.role || null)
   const roleInfo = computed(() => getRole(currentRole.value))
