@@ -10,8 +10,6 @@ import { getBeds } from '@/api/beds'
 import { getBuildings, getCampuses, getRooms, getZones } from '@/api/roomManagement'
 
 const displayMode = ref('chart')
-// 空床位楼栋图的排序模式：默认按空床位数量从高到低排列。
-const emptyBedSortMode = ref('count')
 const collegeOptions = ref([])
 const campusOptions = ref([])
 const zoneOptions = ref([])
@@ -53,8 +51,11 @@ const DASHBOARD_COLORS = Object.freeze({
 
 const DASHBOARD_FONT = '"Source Han Sans SC", "Microsoft YaHei", sans-serif'
 const DASHBOARD_NUMBER_FONT = '"DIN Alternate", "Roboto Mono", Consolas, monospace'
-// 楼栋超过该数量时只展示一个视窗，并启用滑块和鼠标滚轮浏览。
-const EMPTY_BED_VISIBLE_BUILDING_COUNT = 8
+const DEFAULT_CAMPUS_NAME = '蓉江校区'
+const RONGJIANG_ZONE_NAMES = ['北苑', '西苑', '南苑']
+const BED_CACHE_TTL = 5 * 60 * 1000
+const CACHED_CHART_LOADING_DURATION = 280
+const bedRequestCache = new Map()
 
 const BED_STATUS_OPTIONS = [
   { label: '全部床位', value: 'ALL' },
@@ -151,49 +152,12 @@ const collegeOccupiedDistribution = computed(() => countBy(
 const emptyBedLocationDistribution = computed(() => {
   if (filters.status !== 'AVAILABLE') return []
   const emptyRows = dashboardRows.value.filter((row) => isAvailableBedStatus(row.bedStatusCode, row.bedStatus))
-  // 选中具体楼栋后，统计维度从楼栋降级为楼层。
-  if (filters.building) {
-    return countBy(emptyRows, (row) => (String(row.floor ?? '').trim() || '未知楼层'))
-  }
-
-  // 跨校区时显示校区名；未选具体苑区时显示苑区名，保证同名楼栋可区分。
-  const campusCount = new Set(emptyRows.map((row) => getLocationKey(row.campusId, row.campusName))).size
-  const includeCampusName = campusCount > 1
-  const includeZoneName = !filters.zone
-  const counts = new Map()
-
-  // 使用楼栋唯一键聚合，避免不同苑区的“一栋”等同名楼栋被合并。
-  emptyRows.forEach((row) => {
-    const key = getBuildingKey(row)
-    if (!counts.has(key)) {
-      const labelParts = []
-      if (includeCampusName) labelParts.push(row.campusName)
-      if (includeZoneName) labelParts.push(row.zoneName)
-      labelParts.push(row.buildingName)
-      counts.set(key, {
-        name: labelParts.filter((item) => item && item !== '-').join(' / ') || '未知楼栋',
-        value: 0,
-        campusName: row.campusName,
-        zoneName: row.zoneName,
-        buildingName: row.buildingName,
-      })
-    }
-    counts.get(key).value += 1
-  })
-
-  const buildings = [...counts.values()]
-  // “按楼栋”使用位置和中文楼栋名排序；默认“按数量”使用空床位数降序。
-  if (emptyBedSortMode.value === 'building') return buildings.sort(compareEmptyBedBuildingLocation)
-  return buildings.sort((itemA, itemB) => itemB.value - itemA.value || compareEmptyBedBuildingLocation(itemA, itemB))
+  // 已选具体楼栋时降级为各楼层；否则按楼栋聚合
+  const getKey = filters.building
+    ? (row) => (String(row.floor ?? '').trim() || '未知楼层')
+    : (row) => (String(row.buildingName ?? '').trim() || '未知楼栋')
+  return countBy(emptyRows, getKey)
 })
-
-// 左侧图会在学院入住人数、楼栋空床位数和楼层空床位数之间切换。
-const leftChartTitle = computed(() => (
-  filters.status === 'AVAILABLE'
-    ? (filters.building ? '各楼层空床位数' : '各楼栋空床位数')
-    : '各学院入住人数'
-))
-const leftChartAriaLabel = computed(() => `${leftChartTitle.value}横向条形图`)
 
 const buildingNodes = computed(() => buildBuildingNodes(dashboardRows.value))
 const selectedCampus = computed(() => campusOptions.value.find((campus) => isSameValue(campus.value, filters.campus)))
@@ -233,8 +197,9 @@ let chartRequestVersion = 0
 let collegeChart
 let locationChart
 let chartResizeObserver
-// 保存自定义滚轮处理器，重新绘图或销毁图表时用于解除监听。
-let leftChartWheelHandler
+let studentNameSearchTimer
+const buildingHeatmapChartRefs = new Map()
+const buildingHeatmapCharts = new Map()
 
 onMounted(async () => {
   loadCollegeOptions()
@@ -289,13 +254,6 @@ watch(
     if (displayMode.value === 'table') loadBedRows()
   },
 )
-
-// 排序切换只重新绘制已有统计数据，不重复请求后端接口。
-watch(emptyBedSortMode, () => {
-  if (displayMode.value === 'chart' && filters.status === 'AVAILABLE' && !filters.building) {
-    renderDashboardCharts()
-  }
-})
 
 function firstDefined(source, fields) {
   for (const field of fields) {
@@ -381,80 +339,6 @@ function countBy(rows, getKey) {
   return [...counts]
     .map(([name, value]) => ({ name, value }))
     .sort((itemA, itemB) => itemB.value - itemA.value)
-}
-
-function compareEmptyBedBuildingLocation(itemA, itemB) {
-  // 确保同一校区、同一苑区的楼栋连续排列，再比较楼栋名称。
-  for (const field of ['campusName', 'zoneName', 'buildingName']) {
-    const comparison = compareChineseNaturalName(itemA[field], itemB[field])
-    if (comparison !== 0) return comparison
-  }
-  return 0
-}
-
-// 对名称中的阿拉伯数字和中文数字执行自然排序，例如：一栋、二栋、十栋、十一栋。
-function compareChineseNaturalName(valueA, valueB) {
-  const tokensA = getChineseNaturalSortTokens(valueA)
-  const tokensB = getChineseNaturalSortTokens(valueB)
-  const tokenCount = Math.max(tokensA.length, tokensB.length)
-
-  for (let index = 0; index < tokenCount; index += 1) {
-    const tokenA = tokensA[index]
-    const tokenB = tokensB[index]
-    if (!tokenA || !tokenB) return tokensA.length - tokensB.length
-    if (tokenA.number !== null && tokenB.number !== null) {
-      if (tokenA.number !== tokenB.number) return tokenA.number - tokenB.number
-      continue
-    }
-    const comparison = tokenA.text.localeCompare(tokenB.text, 'zh-CN', { numeric: true })
-    if (comparison !== 0) return comparison
-  }
-  return 0
-}
-
-// 将名称拆成文字与数字片段，数字片段转换后再参与比较。
-function getChineseNaturalSortTokens(value) {
-  return String(value ?? '')
-    .split(/(\d+|[零〇一二两三四五六七八九十百千万]+)/)
-    .filter(Boolean)
-    .map((text) => {
-      if (/^\d+$/.test(text)) return { text, number: Number(text) }
-      if (/^[零〇一二两三四五六七八九十百千万]+$/.test(text)) {
-        return { text, number: parseChineseNumber(text) }
-      }
-      return { text, number: null }
-    })
-}
-
-// 将“一、二、十、十一”等中文数字转换为数值，供楼栋名称自然排序使用。
-function parseChineseNumber(value) {
-  const digits = { 零: 0, 〇: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 }
-  const units = { 十: 10, 百: 100, 千: 1000, 万: 10000 }
-  // 不含十进制单位时按连续数字处理，例如“一二”转换为 12。
-  if (!/[十百千万]/.test(value)) {
-    return Number([...value].map((character) => digits[character]).join(''))
-  }
-
-  let total = 0
-  let section = 0
-  let currentDigit = 0
-  // 含单位时按“万、千、百、十”规则累计，例如“十一”转换为 11。
-  for (const character of value) {
-    if (digits[character] !== undefined) {
-      currentDigit = digits[character]
-      continue
-    }
-
-    const unit = units[character]
-    if (unit === 10000) {
-      total += (section + currentDigit) * unit
-      section = 0
-    } else {
-      section += (currentDigit || 1) * unit
-    }
-    currentDigit = 0
-  }
-  return total + section + currentDigit
 }
 
 function formatNumber(value) {
@@ -897,30 +781,12 @@ function renderDashboardCharts() {
   const leftBarColors = isAvailableMode
     ? [{ offset: 0, color: '#B45309' }, { offset: 1, color: '#F5A524' }]
     : [{ offset: 0, color: '#2563EB' }, { offset: 1, color: '#60A5FA' }]
-  // ECharts 类目轴从下往上绘制，反转数据后排序第一项显示在图表顶部。
-  const leftChartItems = [...leftChartData].reverse()
-  // 只有楼栋统计超过 8 项时才显示纵向浏览控件；楼层图和学院图保持原样。
-  const hasBuildingOverflow = isAvailableMode
-    && !filters.building
-    && leftChartItems.length > EMPTY_BED_VISIBLE_BUILDING_COUNT
-  const visibleStartIndex = Math.max(leftChartItems.length - EMPTY_BED_VISIBLE_BUILDING_COUNT, 0)
-  const visibleEndIndex = Math.max(leftChartItems.length - 1, 0)
   collegeChart = getOrCreateChart(collegeChart, collegeChartRef.value)
-  // 每次重绘前移除旧滚轮监听，防止多次绑定导致一次滚动跳过多个楼栋。
-  clearLeftChartWheelHandler()
   collegeChart?.setOption({
-    animationDuration: 600, // 首次渲染时的出场动画时长，数值越小速度越快
-    animationDurationUpdate: 200, // 滚轮浏览或切换排序时的更新动画时长
+    animationDuration: 600,
     aria: { enabled: true },
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, valueFormatter: (value) => `${formatNumber(value)} ${leftChartUnit}` },
-    grid: {
-      top: 12,
-      right: hasBuildingOverflow ? 72 : 44,
-      bottom: 18,
-      left: isAvailableMode && !filters.building ? 12 : 132,
-      // 空床位楼栋标签可能包含校区和苑区，自动为完整文字预留宽度。
-      containLabel: isAvailableMode && !filters.building,
-    },
+    grid: { top: 12, right: 44, bottom: 18, left: 132 },
     xAxis: {
       type: 'value',
       splitLine: { lineStyle: { color: DASHBOARD_COLORS.grid } },
@@ -928,43 +794,14 @@ function renderDashboardCharts() {
     },
     yAxis: {
       type: 'category',
-      data: leftChartItems.map((item) => item.name),
+      data: leftChartData.map((item) => item.name).reverse(),
       axisLine: { show: false },
       axisTick: { show: false },
-      axisLabel: {
-        color: DASHBOARD_COLORS.text,
-        fontFamily: DASHBOARD_FONT,
-        fontSize: isAvailableMode && !filters.building ? 11 : 12,
-        // 楼栋标签完整展示；原学院和楼层标签继续使用固定宽度截断。
-        ...(isAvailableMode && !filters.building ? {} : { width: 112, overflow: 'truncate' }),
-      },
+      axisLabel: { color: DASHBOARD_COLORS.text, fontFamily: DASHBOARD_FONT, width: 112, overflow: 'truncate' },
     },
-    // 超过 8 栋时提供右侧纵向滑块，默认窗口定位到排序后的前 8 栋。
-    dataZoom: hasBuildingOverflow ? [{
-      type: 'slider',
-      yAxisIndex: 0,
-      orient: 'vertical',
-      right: 8,
-      top: 12,
-      bottom: 18,
-      width: 12,
-      filterMode: 'filter',
-      startValue: visibleStartIndex,
-      endValue: visibleEndIndex,
-      zoomLock: true,
-      showDetail: false,
-      showDataShadow: false,
-      brushSelect: false,
-      borderColor: 'rgba(147, 197, 253, 0.24)',
-      backgroundColor: 'rgba(5, 18, 38, 0.72)',
-      fillerColor: 'rgba(245, 165, 36, 0.28)',
-      handleStyle: { color: '#F5A524', borderColor: '#FCD34D' },
-      moveHandleStyle: { color: '#F5A524' },
-      emphasis: { handleStyle: { color: '#FCD34D' }, moveHandleStyle: { color: '#FCD34D' } },
-    }] : [],
     series: [{
       type: 'bar',
-      data: leftChartItems.map((item) => item.value),
+      data: leftChartData.map((item) => item.value).reverse(),
       barMaxWidth: 24,
       label: { show: true, position: 'right', color: DASHBOARD_COLORS.text, fontFamily: DASHBOARD_NUMBER_FONT },
       itemStyle: {
@@ -973,32 +810,6 @@ function renderDashboardCharts() {
       },
     }],
   }, true)
-
-  // ECharts 内置滚轮仅在坐标网格内生效，这里监听整个画布并显式移动楼栋窗口。
-  if (hasBuildingOverflow && collegeChart) {
-    const maximumStartIndex = leftChartItems.length - EMPTY_BED_VISIBLE_BUILDING_COUNT
-    leftChartWheelHandler = (event) => {
-      if (!event.wheelDelta) return
-      // 从 dataZoom 读取滑块当前位置，保证先拖滑块再滚轮时不会跳回初始位置。
-      const dataZoomModel = collegeChart.getModel().getComponent('dataZoom', 0)
-      const [rangeStart] = dataZoomModel.getValueRange('y', 0)
-      const currentStartIndex = Math.round(Number(rangeStart))
-      const direction = event.wheelDelta > 0 ? 1 : -1
-      const nextStartIndex = Math.min(Math.max(currentStartIndex + direction, 0), maximumStartIndex)
-      if (nextStartIndex !== currentStartIndex) {
-        // 每次滚轮移动一个楼栋，同时保持视窗固定展示 8 项。
-        collegeChart.dispatchAction({
-          type: 'dataZoom',
-          dataZoomIndex: 0,
-          startValue: nextStartIndex,
-          endValue: nextStartIndex + EMPTY_BED_VISIBLE_BUILDING_COUNT - 1,
-        })
-      }
-      // 阻止页面接管滚轮事件，让鼠标停在图表上时始终用于浏览楼栋。
-      event.stop?.()
-    }
-    collegeChart.getZr().on('mousewheel', leftChartWheelHandler)
-  }
 
   const regionData = regionDistribution.value
   locationChart = getOrCreateChart(locationChart, locationChartRef.value)
@@ -1177,17 +988,8 @@ function observeChartStage() {
   chartResizeObserver.observe(chartStageRef.value)
 }
 
-function clearLeftChartWheelHandler() {
-  // 解除旧监听，避免图表模式切换或组件卸载后残留事件。
-  if (collegeChart && leftChartWheelHandler) {
-    collegeChart.getZr().off('mousewheel', leftChartWheelHandler)
-  }
-  leftChartWheelHandler = undefined
-}
-
 function disposeCharts() {
-  clearLeftChartWheelHandler()
-  ;[collegeChart, locationChart, roomHeatmapChart].forEach((chart) => chart?.dispose())
+  ;[collegeChart, locationChart, ...buildingHeatmapCharts.values()].forEach((chart) => chart?.dispose())
   collegeChart = undefined
   locationChart = undefined
   buildingHeatmapCharts.clear()
@@ -1710,21 +1512,8 @@ async function handleBuildingChange(buildingId) {
 
         <div class="dashboard-charts">
           <article class="chart-panel">
-            <div class="chart-panel-heading">
-              <h3>{{ leftChartTitle }}</h3>
-              <!-- 排序切换仅用于空床位楼栋图；进入具体楼栋的楼层图后自动隐藏。 -->
-              <el-radio-group
-                v-if="filters.status === 'AVAILABLE' && !filters.building"
-                v-model="emptyBedSortMode"
-                class="empty-bed-sort-switch"
-                size="small"
-                aria-label="空床位楼栋排序方式"
-              >
-                <el-radio-button value="count">按数量</el-radio-button>
-                <el-radio-button value="building">按楼栋</el-radio-button>
-              </el-radio-group>
-            </div>
-            <div ref="collegeChartRef" class="chart-canvas" role="img" :aria-label="leftChartAriaLabel"></div>
+            <h3>{{ filters.status === 'AVAILABLE' ? (filters.building ? '各楼层空床位数' : '各楼栋空床位数') : '各学院入住人数' }}</h3>
+            <div ref="collegeChartRef" class="chart-canvas" role="img" aria-label="各学院入住人数图"></div>
           </article>
           <article class="chart-panel">
             <div class="chart-panel-heading">
@@ -2244,28 +2033,6 @@ async function handleBuildingChange(buildingId) {
 .chart-panel-heading > span {
   color: #93c5fd;
   font-size: 12px;
-}
-
-/* 空床位楼栋图右上角的“按数量 / 按楼栋”紧凑切换按钮。 */
-.empty-bed-sort-switch {
-  flex: 0 0 auto;
-}
-
-.empty-bed-sort-switch :deep(.el-radio-button__inner) {
-  min-height: 26px;
-  padding: 4px 9px;
-  border-color: rgba(147, 197, 253, 0.28);
-  color: #bfdbfe;
-  font-size: 11px;
-  background: rgba(5, 18, 38, 0.72);
-  box-shadow: none;
-}
-
-.empty-bed-sort-switch :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
-  border-color: #f5a524;
-  color: #071326;
-  background: #f5a524;
-  box-shadow: none;
 }
 
 .chart-back-button {
