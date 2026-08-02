@@ -20,19 +20,30 @@ http.interceptors.request.use((config) => {
   return config
 })
 
+function handleAuthExpired() {
+  useAuthStore().logout()
+  if (router.currentRoute.value.name !== 'Login') {
+    void router.replace({ name: 'Login' })
+  }
+}
+
 http.interceptors.response.use(
   (response) => {
     if (response.data?.code === 40102) {
-      useAuthStore().logout()
-
-      if (router.currentRoute.value.name !== 'Login') {
-        void router.replace({ name: 'Login' })
-      }
+      handleAuthExpired()
     }
 
     return response.data
   },
-  (error) => Promise.reject(error),
+  (error) => {
+    const status = error.response?.status
+    const code = error.response?.data?.code
+    if (status === 401 || code === 40102) {
+      handleAuthExpired()
+    }
+
+    return Promise.reject(error)
+  },
 )
 
 export default http
