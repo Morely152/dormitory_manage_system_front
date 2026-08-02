@@ -9,6 +9,10 @@ import { deleteStudentAccommodations } from '@/api/studentAccommodation'
 
 const bedRows = ref([])
 const collegeOptions = ref([])
+const gradeYearOptions = Array.from(
+  { length: 8 },
+  (_, index) => String(new Date().getFullYear() - index),
+)
 const campusOptions = ref([])
 const zoneOptions = ref([])
 const buildingOptions = ref([])
@@ -474,7 +478,14 @@ async function handleDelete() {
       </label>
       <label>
         <span>年级</span>
-        <el-input v-model.trim="filters.gradeYear" clearable placeholder="例如：2023" />
+        <el-select v-model="filters.gradeYear" clearable filterable placeholder="全部年级">
+          <el-option
+            v-for="gradeYear in gradeYearOptions"
+            :key="gradeYear"
+            :label="gradeYear"
+            :value="gradeYear"
+          />
+        </el-select>
       </label>
     </section>
 
