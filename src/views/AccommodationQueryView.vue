@@ -30,6 +30,7 @@ const drilledCampusId = ref('')
 const drilledZoneId = ref('')
 const roomDetailVisible = ref(false)
 const selectedHeatmapRoom = ref(null)
+const studentNameInput = ref('')
 
 const DASHBOARD_COLORS = Object.freeze({
   backgroundStart: '#0A1628',
@@ -89,6 +90,7 @@ const filters = reactive({
   zone: '',
   building: '',
   room: '',
+  studentName: '',
   gender: '',
   status: 'ALL',
 })
@@ -195,6 +197,7 @@ let chartRequestVersion = 0
 let collegeChart
 let locationChart
 let chartResizeObserver
+let studentNameSearchTimer
 const buildingHeatmapChartRefs = new Map()
 const buildingHeatmapCharts = new Map()
 
@@ -214,6 +217,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  clearTimeout(studentNameSearchTimer)
   chartResizeObserver?.disconnect()
   disposeCharts()
 })
@@ -398,7 +402,7 @@ function normalizeBedRows(rows) {
   })
 }
 
-function buildBedQuery(page, size) {
+function buildBedQuery(page, size, includeStudentName = false) {
   const query = {
     campusId: filters.campus || undefined,
     zoneId: filters.zone || undefined,
@@ -408,9 +412,23 @@ function buildBedQuery(page, size) {
     status: filters.status,
   }
 
+  if (includeStudentName) query.studentName = filters.studentName || undefined
+
   if (page !== undefined) query.page = page
   if (size !== undefined) query.size = size
   return query
+}
+
+function handleStudentNameInput(value) {
+  clearTimeout(studentNameSearchTimer)
+  studentNameSearchTimer = setTimeout(() => {
+    filters.studentName = String(value ?? '').trim()
+  }, 300)
+}
+
+function clearStudentNameFilter() {
+  clearTimeout(studentNameSearchTimer)
+  filters.studentName = ''
 }
 
 function getBedCacheKey(params = {}) {
@@ -459,7 +477,7 @@ async function loadBedRows() {
 
   try {
     const data = unwrapResponse(await getCachedBeds(
-      needsCollegeFilter ? buildBedQuery() : buildBedQuery(pagination.currentPage - 1, pagination.pageSize),
+      needsCollegeFilter ? buildBedQuery(undefined, undefined, true) : buildBedQuery(pagination.currentPage - 1, pagination.pageSize, true),
     ), '床位列表加载失败')
     if (!Array.isArray(data?.items)) {
       throw new Error('床位分页响应格式不正确')
@@ -1030,7 +1048,7 @@ const EXCEL_COLUMNS = [
 async function exportBedTable() {
   if (exportingExcel.value) return
 
-  const query = buildBedQuery()
+  const query = buildBedQuery(undefined, undefined, true)
   const college = filters.college
   exportingExcel.value = true
   try {
@@ -1212,7 +1230,11 @@ async function handleBuildingChange(buildingId) {
       <h1>{{ displayMode === 'chart' ? '赣南师范大学宿舍床位数据大屏' : '赣南师范大学宿舍床位数据统计表' }}</h1>
     </header>
 
-    <section class="filter-board" aria-labelledby="filter-board-title">
+    <section
+      class="filter-board"
+      :class="{ 'filter-board--table': displayMode === 'table' }"
+      aria-labelledby="filter-board-title"
+    >
       <h2 id="filter-board-title" class="visually-hidden">住宿数据筛选</h2>
 
       <label class="filter-field">
@@ -1226,6 +1248,17 @@ async function handleBuildingChange(buildingId) {
         >
           <el-option v-for="college in collegeOptions" :key="college" :label="college" :value="college" />
         </el-select>
+      </label>
+
+      <label v-if="displayMode === 'table'" class="filter-field">
+        <span>姓名</span>
+        <el-input
+          v-model="studentNameInput"
+          clearable
+          placeholder="输入学生姓名"
+          @input="handleStudentNameInput"
+          @clear="clearStudentNameFilter"
+        />
       </label>
 
       <label class="filter-field">
@@ -1642,6 +1675,10 @@ async function handleBuildingChange(buildingId) {
   box-shadow: 0 10px 24px rgba(3, 12, 28, 0.22);
 }
 
+.filter-board--table {
+  grid-template-columns: repeat(8, minmax(96px, 1fr)) minmax(184px, auto);
+}
+
 .filter-field {
   display: flex;
   min-width: 0;
@@ -1656,24 +1693,30 @@ async function handleBuildingChange(buildingId) {
   font-weight: 600;
 }
 
-.filter-field :deep(.el-select) {
+.filter-field :deep(.el-select),
+.filter-field :deep(.el-input) {
   width: 100%;
 }
 
-.filter-field :deep(.el-select__wrapper) {
+.filter-field :deep(.el-select__wrapper),
+.filter-field :deep(.el-input__wrapper) {
   min-height: 34px;
   color: var(--screen-text);
   background: rgba(5, 18, 38, 0.72);
   box-shadow: 0 0 0 1px rgba(147, 197, 253, 0.22) inset;
 }
 
-.filter-field :deep(.el-select__wrapper:hover) {
+.filter-field :deep(.el-select__wrapper:hover),
+.filter-field :deep(.el-input__wrapper:hover),
+.filter-field :deep(.el-input__wrapper.is-focus) {
   box-shadow: 0 0 0 1px #60a5fa inset;
 }
 
 .filter-field :deep(.el-select__selected-item),
 .filter-field :deep(.el-select__placeholder),
-.filter-field :deep(.el-select__caret) {
+.filter-field :deep(.el-select__caret),
+.filter-field :deep(.el-input__inner),
+.filter-field :deep(.el-input__clear) {
   color: var(--screen-text);
 }
 
