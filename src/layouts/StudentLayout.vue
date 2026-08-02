@@ -53,7 +53,7 @@ function logout() {
           <span class="student-brand__mark" aria-hidden="true">D</span>
           <span class="student-brand__text">
             <strong>学生住宿服务</strong>
-            <small>宿舍床位管理系统</small>
+            <small>学生公寓管理系统</small>
           </span>
         </RouterLink>
 
