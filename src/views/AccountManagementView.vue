@@ -4,7 +4,6 @@ import { Delete, EditPen, Plus, Refresh, Search, UserFilled } from '@element-plu
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { createUser, deleteUser, getRoles, getUsers, updateUser } from '@/api/accountManagement'
 import { getBuildings, getCampuses, getZones } from '@/api/roomManagement'
-import { ROLE_KEYS } from '@/config/access'
 
 const formRef = ref()
 const loading = ref(false)
@@ -95,9 +94,8 @@ function selectedRole() {
 }
 
 const selectedRoleCode = computed(() => selectedRole()?.roleCode || '')
-const isZoneManager = computed(() =>
-  [ROLE_KEYS.ZONE_MANAGER, ROLE_KEYS.ZONE_ADMIN].includes(selectedRoleCode.value),
-)
+const isZoneManager = computed(() => selectedRoleCode.value === 'ZONE_MANAGER')
+const isBuildingManager = computed(() => selectedRoleCode.value === 'BUILDING_MANAGER')
 const editorTitle = computed(() => (editor.mode === 'create' ? '新增用户账号' : '编辑用户账号'))
 const filteredUsers = computed(() => {
   const query = keyword.value.trim().toLowerCase()
@@ -118,10 +116,16 @@ const formRules = {
   mobile: [{ max: 32, message: '联系电话不能超过 32 个字符', trigger: 'blur' }],
   roleId: [{ required: true, message: '请选择角色', trigger: 'change' }],
   zoneId: [{ validator: validateZone, trigger: 'change' }],
+  buildingId: [{ validator: validateBuilding, trigger: 'change' }],
 }
 
 function validateZone(_rule, value, callback) {
   if (isZoneManager.value && !value) callback(new Error('苑区管理员必须选择苑区'))
+  else callback()
+}
+
+function validateBuilding(_rule, value, callback) {
+  if (isBuildingManager.value && !value) callback(new Error('楼栋管理员必须选择楼栋'))
   else callback()
 }
 
@@ -148,9 +152,7 @@ async function loadRolesAndCampuses() {
       getRoles().then((response) => unwrapList(response, '角色列表响应格式不正确')),
       getCampuses().then((response) => unwrapList(response, '校区列表响应格式不正确')),
     ])
-    roles.value = roleRows.filter(
-      (role) => role.active !== false && Object.values(ROLE_KEYS).includes(role.roleCode),
-    )
+    roles.value = roleRows.filter((role) => role.active !== false)
     campuses.value = campusRows.map((item) => normalizeOption(item, 'campus')).filter((item) => item.id !== undefined)
   } catch (error) {
     ElMessage.error(requestError(error, '表单选项加载失败'))
@@ -396,7 +398,7 @@ onMounted(async () => {
 
         <fieldset class="scope-fieldset">
           <legend>管理范围</legend>
-          <p class="scope-note">苑区老师和苑区管理员须选择苑区。</p>
+          <p class="scope-note">苑区管理员须选择苑区；楼栋管理员须选择楼栋。</p>
           <div class="dialog-form-grid">
             <el-form-item label="校区">
               <el-select v-model="editor.form.campusId" :loading="optionsLoading" clearable placeholder="请选择校区" @change="handleCampusChange">

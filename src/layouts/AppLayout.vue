@@ -1,14 +1,11 @@
 <script setup>
 import { ArrowDown, House, SwitchButton } from '@element-plus/icons-vue'
-import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getSubsystem } from '@/config/access'
 import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
-const subsystem = computed(() => getSubsystem(route.meta.subsystemId))
 
 function handleCommand(command) {
   if (command === 'portal') {
@@ -27,11 +24,11 @@ function handleCommand(command) {
     <a class="skip-link" href="#main-content">跳到主要内容</a>
 
     <header v-if="!route.meta.fullscreen" class="app-header">
-      <RouterLink class="brand" :to="{ name: 'Portal' }" aria-label="返回综合服务入口">
+      <RouterLink class="brand" :to="{ name: 'Portal' }" aria-label="返回宿舍床位管理系统工作台">
         <span class="brand__mark" aria-hidden="true">D</span>
         <span class="brand__text">
-          <strong>学生公寓管理系统</strong>
-          <small>Dormitory Services</small>
+          <strong>宿舍床位管理系统</strong>
+          <small>Dormitory Management</small>
         </span>
       </RouterLink>
 
@@ -47,7 +44,7 @@ function handleCommand(command) {
             <el-dropdown-menu>
               <el-dropdown-item command="portal">
                 <el-icon><House /></el-icon>
-                系统入口
+                工作台
               </el-dropdown-item>
               <el-dropdown-item divided command="logout">
                 <el-icon><SwitchButton /></el-icon>
@@ -59,24 +56,11 @@ function handleCommand(command) {
       </div>
     </header>
 
-    <main
-      id="main-content"
-      class="app-main"
-      :class="{ 'app-main--fullscreen': route.meta.fullscreen }"
-      tabindex="-1"
-    >
+    <main id="main-content" class="app-main" :class="{ 'app-main--fullscreen': route.meta.fullscreen }" tabindex="-1">
       <div v-if="route.name !== 'Portal' && !route.meta.fullscreen" class="breadcrumb-wrap">
         <el-breadcrumb separator="/">
-          <el-breadcrumb-item :to="{ name: 'Portal' }">系统入口</el-breadcrumb-item>
-          <el-breadcrumb-item v-if="subsystem && route.name === subsystem.routeName">
-            {{ subsystem.title }}
-          </el-breadcrumb-item>
-          <template v-else>
-            <el-breadcrumb-item v-if="subsystem" :to="{ name: subsystem.routeName }">
-              {{ subsystem.title }}
-            </el-breadcrumb-item>
-            <el-breadcrumb-item>{{ route.meta.title }}</el-breadcrumb-item>
-          </template>
+          <el-breadcrumb-item :to="{ name: 'Portal' }">工作台</el-breadcrumb-item>
+          <el-breadcrumb-item>{{ route.meta.title }}</el-breadcrumb-item>
         </el-breadcrumb>
       </div>
 

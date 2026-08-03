@@ -2,46 +2,67 @@
 import * as ElementPlusIcons from '@element-plus/icons-vue'
 import { computed } from 'vue'
 import { ArrowRight } from '@element-plus/icons-vue'
-import { getSubsystemsForRole } from '@/config/access'
+import { getModuleDescription, getModulesForRole } from '@/config/access'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
-const subsystems = computed(() => getSubsystemsForRole(auth.currentRole.value))
+const modules = computed(() => getModulesForRole(auth.currentRole.value))
+const groupedModules = computed(() => {
+  return modules.value.reduce((groups, module) => {
+    const group = groups.find((item) => item.name === module.group)
+    if (group) {
+      group.modules.push(module)
+    } else {
+      groups.push({ name: module.group, modules: [module] })
+    }
+    return groups
+  }, [])
+})
 </script>
 
 <template>
-  <div class="portal-page system-selector-page">
+  <div class="portal-page">
     <section class="portal-intro" aria-labelledby="portal-title">
       <div>
-        <p class="portal-intro__eyebrow">综合服务入口</p>
+        <!-- <p class="portal-intro__eyebrow">{{ auth.roleInfo.value?.shortLabel }}</p> -->
         <h1 id="portal-title">你好，{{ auth.currentUser.value?.name }}</h1>
-        <p>请选择要进入的业务系统。</p>
+        <p>当前角色：<strong>{{ auth.roleInfo.value?.label }}</strong></p>
       </div>
-      <div class="portal-intro__status" aria-label="当前可进入的子系统数量">
-        <strong>{{ subsystems.length }}</strong>
-        <span>个可用系统</span>
+      <div class="portal-intro__status" aria-label="当前可用功能数量">
+        <strong>{{ modules.length }}</strong>
+        <span>个可用功能</span>
       </div>
     </section>
 
-    <section class="system-selector" aria-labelledby="system-selector-title">
+    <section
+      v-for="group in groupedModules"
+      :key="group.name"
+      class="module-section"
+      :aria-labelledby="`group-${group.name}`"
+    >
       <div class="section-heading">
-        <h2 id="system-selector-title">可用系统</h2>
+        <h2 :id="`group-${group.name}`">{{ group.name }}</h2>
+        <span>{{ group.modules.length }} 项</span>
       </div>
-      <div class="system-grid">
+
+      <div class="module-grid">
         <RouterLink
-          v-for="subsystem in subsystems"
-          :key="subsystem.id"
-          class="system-card"
-          :to="{ name: subsystem.routeName }"
+          v-for="module in group.modules"
+          :key="module.id"
+          class="module-card"
+          :class="{ 'module-card--danger': module.tone === 'danger' }"
+          :to="{ name: module.routeName }"
+          :target="module.id === 'accommodation-query' ? '_blank' : undefined"
+          :rel="module.id === 'accommodation-query' ? 'noopener noreferrer' : undefined"
         >
-          <span class="system-card__icon" aria-hidden="true">
-            <el-icon><component :is="ElementPlusIcons[subsystem.icon]" /></el-icon>
+          <span class="module-card__icon" aria-hidden="true">
+            <el-icon><component :is="ElementPlusIcons[module.icon]" /></el-icon>
           </span>
-          <span class="system-card__content">
-            <strong>{{ subsystem.title }}</strong>
-            <span>{{ subsystem.description }}</span>
+          <span class="module-card__content">
+            <strong>{{ module.title }}</strong>
+            <span>{{ getModuleDescription(module, auth.currentRole.value) }}</span>
           </span>
-          <el-icon class="system-card__arrow" aria-hidden="true"><ArrowRight /></el-icon>
+          <el-icon class="module-card__arrow" aria-hidden="true"><ArrowRight /></el-icon>
         </RouterLink>
       </div>
     </section>

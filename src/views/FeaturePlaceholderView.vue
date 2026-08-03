@@ -2,23 +2,20 @@
 import * as ElementPlusIcons from '@element-plus/icons-vue'
 import { computed } from 'vue'
 import { ArrowLeft } from '@element-plus/icons-vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { getModule, getModuleDescription } from '@/config/access'
 import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
-const router = useRouter()
 const auth = useAuthStore()
 const currentModule = computed(() => getModule(route.meta.moduleId))
-const description = computed(() => getModuleDescription(currentModule.value, auth.currentRole.value))
-
-function backToWorkspace() {
-  router.push({ name: currentModule.value?.subsystem ? `${currentModule.value.subsystem[0].toUpperCase()}${currentModule.value.subsystem.slice(1)}Workspace` : 'Portal' })
-}
+const description = computed(() =>
+  getModuleDescription(currentModule.value, auth.currentRole.value),
+)
 </script>
 
 <template>
-  <div v-if="currentModule" class="feature-page">
+  <div class="feature-page">
     <header class="feature-header">
       <div class="feature-header__icon" aria-hidden="true">
         <el-icon><component :is="ElementPlusIcons[currentModule.icon]" /></el-icon>
@@ -32,9 +29,9 @@ function backToWorkspace() {
 
     <section class="empty-workspace" aria-labelledby="workspace-title">
       <div class="empty-workspace__mark" aria-hidden="true"></div>
-      <h2 id="workspace-title">暂无可展示的记录</h2>
-      <p>请在有新的业务事项后返回查看。</p>
-      <el-button :icon="ArrowLeft" @click="backToWorkspace">返回工作台</el-button>
+      <h2 id="workspace-title">页面路由已就绪</h2>
+      <p>当前阶段已完成入口和访问权限配置，业务功能将在后续阶段接入。</p>
+      <el-button :icon="ArrowLeft" @click="$router.push({ name: 'Portal' })">返回工作台</el-button>
     </section>
   </div>
 </template>

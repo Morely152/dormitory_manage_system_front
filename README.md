@@ -1,4 +1,4 @@
-# 学生公寓管理系统前端
+# 宿舍床位管理系统前端
 
 基于 Vue 3、Vite、Vue Router、Axios 和 Element Plus 的前端项目骨架。
 

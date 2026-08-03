@@ -3,7 +3,7 @@ import { reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Lock, OfficeBuilding, QuestionFilled, User } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { getRole } from '@/config/access'
+import { getRole, ROLE_KEYS } from '@/config/access'
 import { login as loginApi } from '@/api/auth'
 import { useAuthStore } from '@/stores/auth'
 
@@ -61,6 +61,11 @@ async function submit() {
     auth.setLoginSession(loginData)
     ElMessage.success('登录成功')
 
+    if (loginData.user.roleCode === ROLE_KEYS.STUDENT) {
+      await router.replace({ name: 'StudentConfirmation' })
+      return
+    }
+
     const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/portal'
     await router.replace(redirect)
   } catch (error) {
@@ -79,7 +84,7 @@ async function submit() {
           <el-icon><OfficeBuilding /></el-icon>
         </div>
         <p class="login-brand__eyebrow" style="font-size: 30px;">赣南师范大学</p>
-        <h1 id="system-name">学生公寓管理系统</h1>
+        <h1 id="system-name">宿舍床位管理系统</h1>
         <p class="login-brand__slogan">连接学生与寝室的信息协同一体化平台</p>
       </div>
       <p class="login-brand__footer">Dormitory Management System</p>
