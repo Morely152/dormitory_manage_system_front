@@ -81,6 +81,16 @@ export const ACCESS_MODULES = Object.freeze([
     },
   },
   {
+    id: 'bed-allocation',
+    routeName: 'BedAllocation',
+    path: '/accommodation/bed-allocation',
+    title: '寝室床位智能分配',
+    description: '为真实新生或自定义人数生成可调整、可导出的床位预分配方案',
+    group: '住宿信息',
+    icon: 'Grid',
+    roles: [ROLE_KEYS.SYSTEM_ADMIN, ROLE_KEYS.DORMITORY_ADMIN],
+  },
+  {
     id: 'accommodation-import',
     routeName: 'AccommodationImport',
     path: '/accommodation/import',
