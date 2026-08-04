@@ -85,6 +85,13 @@ const bedManagementRoles = [
 
 const accommodationViewRoles = [...bedManagementRoles, ROLE_KEYS.READONLY_USER]
 
+const MODULE_OPERATION_PRIORITY = Object.freeze({
+  query: 1,
+  create: 2,
+  delete: 3,
+  edit: 4,
+})
+
 export const ACCESS_MODULES = Object.freeze([
   {
     id: 'accommodation-query',
@@ -95,6 +102,7 @@ export const ACCESS_MODULES = Object.freeze([
     title: '住宿信息查看',
     group: '住宿信息管理',
     icon: 'Search',
+    operation: 'query',
     roles: accommodationViewRoles,
     descriptions: {
       [ROLE_KEYS.SYSTEM_ADMIN]: '查看全校学生住宿与床位使用情况。',
@@ -115,6 +123,7 @@ export const ACCESS_MODULES = Object.freeze([
     description: '批量导入学生住宿信息。',
     group: '住宿信息管理',
     icon: 'UploadFilled',
+    operation: 'create',
     roles: bedManagementRoles,
   },
   {
@@ -127,6 +136,7 @@ export const ACCESS_MODULES = Object.freeze([
     description: '删除不再住宿的学生住宿信息。',
     group: '住宿信息管理',
     icon: 'DeleteFilled',
+    operation: 'delete',
     tone: 'danger',
     roles: bedManagementRoles,
   },
@@ -140,6 +150,7 @@ export const ACCESS_MODULES = Object.freeze([
     description: '查看学生住宿信息的历史变更记录。',
     group: '住宿信息管理',
     icon: 'DocumentChecked',
+    operation: 'query',
     roles: [ROLE_KEYS.SYSTEM_ADMIN, ROLE_KEYS.DORMITORY_ADMIN],
   },
   {
@@ -152,6 +163,7 @@ export const ACCESS_MODULES = Object.freeze([
     description: '确认已提交的住宿信息修改申请。',
     group: '住宿信息管理',
     icon: 'DocumentChecked',
+    operation: 'edit',
     roles: [ROLE_KEYS.SYSTEM_ADMIN, ROLE_KEYS.DORMITORY_ADMIN],
   },
   {
@@ -164,6 +176,7 @@ export const ACCESS_MODULES = Object.freeze([
     description: '提交学生住宿与转专业后的信息修改申请。',
     group: '住宿信息管理',
     icon: 'Edit',
+    operation: 'edit',
     roles: [ROLE_KEYS.SYSTEM_ADMIN, ROLE_KEYS.DORMITORY_ADMIN, ROLE_KEYS.COUNSELOR],
   },
   {
@@ -176,6 +189,7 @@ export const ACCESS_MODULES = Object.freeze([
     description: '审核学生反馈的住宿信息纠正申请。',
     group: '住宿信息管理',
     icon: 'WarningFilled',
+    operation: 'edit',
     roles: [ROLE_KEYS.COUNSELOR],
   },
   {
@@ -188,6 +202,7 @@ export const ACCESS_MODULES = Object.freeze([
     description: '核对并确认本人的住宿信息。',
     group: '住宿信息管理',
     icon: 'CircleCheckFilled',
+    operation: 'edit',
     roles: [ROLE_KEYS.STUDENT],
   },
   {
@@ -200,6 +215,7 @@ export const ACCESS_MODULES = Object.freeze([
     description: '查看本人当前住宿与床位信息。',
     group: '住宿信息管理',
     icon: 'View',
+    operation: 'query',
     roles: [ROLE_KEYS.STUDENT],
   },
   {
@@ -207,10 +223,11 @@ export const ACCESS_MODULES = Object.freeze([
     subsystem: SUBSYSTEM_KEYS.MAINTENANCE,
     routeName: 'RepairApplication',
     path: '/maintenance/reports/create',
-    title: '申请报修',
-    description: '提交所在房间或分管苑区内的维修需求。',
+    title: '上报维修',
+    description: '提交寝室内的维修需求。',
     group: '上报问题',
     icon: 'EditPen',
+    operation: 'create',
     roles: [ROLE_KEYS.STUDENT, ROLE_KEYS.ZONE_ADMIN],
   },
   {
@@ -222,7 +239,14 @@ export const ACCESS_MODULES = Object.freeze([
     description: '查看已上报的维修问题及处理进度。',
     group: '问题管理',
     icon: 'List',
-    roles: [ROLE_KEYS.STUDENT, ROLE_KEYS.ZONE_ADMIN, ROLE_KEYS.READONLY_USER],
+    operation: 'query',
+    roles: [
+      ROLE_KEYS.SYSTEM_ADMIN,
+      ROLE_KEYS.DORMITORY_ADMIN,
+      ROLE_KEYS.STUDENT,
+      ROLE_KEYS.ZONE_ADMIN,
+      ROLE_KEYS.READONLY_USER,
+    ],
   },
   {
     id: 'repair-work-order-create',
@@ -233,6 +257,7 @@ export const ACCESS_MODULES = Object.freeze([
     description: '将已上报的问题整理为待审核工单。',
     group: '问题管理',
     icon: 'DocumentAdd',
+    operation: 'create',
     roles: [ROLE_KEYS.ZONE_MANAGER],
   },
   {
@@ -244,6 +269,7 @@ export const ACCESS_MODULES = Object.freeze([
     description: '查看并编辑等待审核的工单。',
     group: '工单管理',
     icon: 'Tickets',
+    operation: 'query',
     roles: [ROLE_KEYS.ZONE_MANAGER],
   },
   {
@@ -255,7 +281,8 @@ export const ACCESS_MODULES = Object.freeze([
     description: '审核苑区老师提交的维修工单。',
     group: '工单管理',
     icon: 'CircleCheck',
-    roles: [ROLE_KEYS.DORMITORY_ADMIN],
+    operation: 'edit',
+    roles: [ROLE_KEYS.SYSTEM_ADMIN, ROLE_KEYS.DORMITORY_ADMIN],
   },
   {
     id: 'repair-work-order-dispatch',
@@ -266,6 +293,7 @@ export const ACCESS_MODULES = Object.freeze([
     description: '将审核通过的工单派发至维修人员。',
     group: '工单管理',
     icon: 'Promotion',
+    operation: 'edit',
     roles: [ROLE_KEYS.ZONE_MANAGER],
   },
   {
@@ -277,6 +305,7 @@ export const ACCESS_MODULES = Object.freeze([
     description: '查看分配给本人的待处理维修工单。',
     group: '工单管理',
     icon: 'Tools',
+    operation: 'edit',
     roles: [ROLE_KEYS.REPAIR_WORKER, ROLE_KEYS.REPAIR_TEAM],
   },
   {
@@ -288,8 +317,10 @@ export const ACCESS_MODULES = Object.freeze([
     description: '查看维修工单的完整流转记录。',
     group: '工单管理',
     icon: 'Document',
+    operation: 'query',
     roles: [
       ROLE_KEYS.ZONE_MANAGER,
+      ROLE_KEYS.SYSTEM_ADMIN,
       ROLE_KEYS.DORMITORY_ADMIN,
       ROLE_KEYS.REPAIR_WORKER,
       ROLE_KEYS.REPAIR_TEAM,
@@ -305,6 +336,7 @@ export const ACCESS_MODULES = Object.freeze([
     description: '验收已完成的维修工单。',
     group: '工单管理',
     icon: 'Finished',
+    operation: 'edit',
     roles: [ROLE_KEYS.ZONE_MANAGER],
   },
   {
@@ -316,6 +348,7 @@ export const ACCESS_MODULES = Object.freeze([
     description: '维护系统登录账号与角色。',
     group: '系统管理',
     icon: 'UserFilled',
+    operation: 'edit',
     roles: [ROLE_KEYS.SYSTEM_ADMIN],
   },
   {
@@ -327,6 +360,7 @@ export const ACCESS_MODULES = Object.freeze([
     description: '维护校区、苑区、楼栋和房间信息。',
     group: '系统管理',
     icon: 'OfficeBuilding',
+    operation: 'edit',
     roles: [ROLE_KEYS.SYSTEM_ADMIN, ROLE_KEYS.DORMITORY_ADMIN],
   },
   {
@@ -338,6 +372,7 @@ export const ACCESS_MODULES = Object.freeze([
     description: '查看系统用户的操作记录。',
     group: '系统管理',
     icon: 'Document',
+    operation: 'query',
     roles: [ROLE_KEYS.SYSTEM_ADMIN, ROLE_KEYS.DORMITORY_ADMIN],
   },
 ])
@@ -362,7 +397,20 @@ export function getModulesForRole(roleKey, subsystemId) {
   return ACCESS_MODULES.filter(
     (module) =>
       module.roles.includes(roleKey) && (!subsystemId || module.subsystem === subsystemId),
-  )
+  ).sort((left, right) => {
+    const leftGroupOrder = ACCESS_MODULES.findIndex(
+      (module) => module.subsystem === left.subsystem && module.group === left.group,
+    )
+    const rightGroupOrder = ACCESS_MODULES.findIndex(
+      (module) => module.subsystem === right.subsystem && module.group === right.group,
+    )
+
+    if (leftGroupOrder !== rightGroupOrder) return leftGroupOrder - rightGroupOrder
+
+    return (
+      MODULE_OPERATION_PRIORITY[left.operation] - MODULE_OPERATION_PRIORITY[right.operation]
+    )
+  })
 }
 
 export function getModuleDescription(module, roleKey) {

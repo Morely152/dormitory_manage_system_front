@@ -156,7 +156,6 @@ onMounted(loadStudentProfile)
         heading-id="student-personal-information-title"
         title="个人信息"
         description="个人学籍与联系信息"
-        status="已加载"
         :icon="UserFilled"
         :fields="personalFields"
       />
