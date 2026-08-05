@@ -7,18 +7,41 @@ import {
   Download,
   UploadFilled,
 } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import * as XLSX from 'xlsx'
 import {
-  commitStudentAccommodationImport,
+  createStudentAccommodationImportTask,
   commitSingleStudentAccommodation,
   downloadStudentAccommodationTemplate,
+  getCurrentStudentAccommodationImportTask,
   getCollegeOptions,
+  getStudentAccommodationImportTask,
 } from '@/api/accommodationImport'
 import { getBuildings, getCampuses, getRooms, getZones } from '@/api/roomManagement'
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024
 const MOBILE_MEDIA_QUERY = '(max-width: 600px)'
+const ACTIVE_IMPORT_TASK_STATUSES = new Set(['PENDING', 'PROCESSING'])
+const IMPORT_ISSUE_COLUMNS = [
+  ['studentNo', '学号'],
+  ['studentName', '姓名'],
+  ['gender', '性别'],
+  ['collegeName', '学院名称'],
+  ['majorName', '专业名称'],
+  ['className', '班级名称'],
+  ['gradeYear', '入学年级'],
+  ['mobile', '联系电话'],
+  ['studentStatus', '学籍状态'],
+  ['accommodationStatus', '住宿状态'],
+  ['campusName', '校区名称'],
+  ['zoneName', '苑区名称'],
+  ['buildingName', '楼栋名称'],
+  ['roomCode', '寝室号'],
+  ['bedCode', '床位号'],
+  ['classTeacher', '班主任'],
+  ['classTeacherPhone', '班主任电话'],
+  ['counselorPhone', '辅导员电话'],
+].map(([prop, label]) => ({ prop, label }))
 
 const isMobile = ref(window.matchMedia(MOBILE_MEDIA_QUERY).matches)
 const activeTab = ref(isMobile.value ? 'single' : 'batch')
@@ -26,10 +49,22 @@ const uploadRef = ref()
 const batchFile = ref(null)
 const fileList = ref([])
 const batchLoading = ref(false)
+const importTask = ref(null)
 const templateLoading = ref(false)
 const commitResult = ref(null)
 const issueColumns = ref([])
 const issueRows = ref([])
+const batchCampusOptions = ref([])
+const batchZoneOptions = ref([])
+const batchCampusId = ref('')
+const deleteZoneId = ref('')
+const batchLocationLoading = reactive({
+  campuses: false,
+  zones: false,
+})
+let batchZoneRequestVersion = 0
+let importTaskPollingRunId = 0
+let completedTaskNoticeId = ''
 
 const summary = computed(() => ({
   total: commitResult.value?.totalRows ?? 0,
@@ -38,6 +73,28 @@ const summary = computed(() => ({
 }))
 
 const hasBatchResult = computed(() => Boolean(commitResult.value))
+const isBatchTaskActive = computed(() => ACTIVE_IMPORT_TASK_STATUSES.has(importTask.value?.status))
+const importProgressPercentage = computed(() => {
+  const totalRows = importTask.value?.totalRows || 0
+  return totalRows ? Math.round(((importTask.value?.processedRows || 0) / totalRows) * 100) : 0
+})
+const importProgressStep = computed(() => {
+  if (!importTask.value) return 0
+  if (importTask.value.phase === 'CLEARING') return 0
+  if (importTask.value.phase === 'IMPORTING') return 1
+  return 2
+})
+const importTaskStatusText = computed(() => {
+  if (!importTask.value) return ''
+  if (importTask.value.phase === 'WAITING') return '任务已创建，正在等待处理'
+  if (importTask.value.phase === 'CLEARING') return '正在清空所选苑区的旧住宿数据'
+  if (importTask.value.phase === 'IMPORTING') return `正在导入新数据：${importTask.value.processedRows} / ${importTask.value.totalRows}`
+  if (importTask.value.status === 'FAILED') return importTask.value.errorMessage || '导入任务执行失败'
+  return '导入任务已完成'
+})
+const selectedBatchZoneName = computed(() => (
+  batchZoneOptions.value.find((zone) => String(zone.value) === String(deleteZoneId.value))?.label || ''
+))
 
 const singleFormRef = ref()
 const singleLoading = ref(false)
@@ -84,10 +141,13 @@ onMounted(() => {
   handleViewportChange(mobileMediaQuery)
   mobileMediaQuery.addEventListener('change', handleViewportChange)
   loadCollegeOptions()
+  loadBatchCampusOptions()
+  void restoreCurrentImportTask()
 })
 
 onBeforeUnmount(() => {
   mobileMediaQuery?.removeEventListener('change', handleViewportChange)
+  importTaskPollingRunId += 1
 })
 
 function createEmptySingleForm() {
@@ -131,6 +191,56 @@ function compareResourceRows(rowA, rowB, idFields) {
   const numberB = Number(valueB)
   if (Number.isFinite(numberA) && Number.isFinite(numberB)) return numberA - numberB
   return String(valueA ?? '').localeCompare(String(valueB ?? ''), 'zh-CN', { numeric: true })
+}
+
+function toSelectOptions(rows, idFields, nameFields) {
+  return [...rows]
+    .sort((rowA, rowB) => compareResourceRows(rowA, rowB, idFields))
+    .map((row) => {
+      const value = firstDefined(row, idFields)
+      const label = String(firstDefined(row, nameFields) ?? '').trim()
+      return value === undefined || !label ? null : { value, label }
+    })
+    .filter(Boolean)
+}
+
+async function loadBatchCampusOptions() {
+  batchLocationLoading.campuses = true
+  try {
+    const rows = unwrapResponse(await getCampuses(), '校区列表加载失败')
+    if (!Array.isArray(rows)) throw new Error('校区列表响应格式不正确')
+    batchCampusOptions.value = toSelectOptions(rows, ['id', 'campusId', 'value'], ['campusName', 'name', 'label'])
+  } catch (error) {
+    ElMessage.error(await requestErrorMessage(error, '校区列表加载失败'))
+  } finally {
+    batchLocationLoading.campuses = false
+  }
+}
+
+async function handleBatchCampusChange() {
+  const requestVersion = ++batchZoneRequestVersion
+  deleteZoneId.value = ''
+  batchZoneOptions.value = []
+  resetBatchResult()
+  if (!batchCampusId.value) return
+
+  batchLocationLoading.zones = true
+  try {
+    const rows = unwrapResponse(await getZones(batchCampusId.value), '苑区列表加载失败')
+    if (requestVersion !== batchZoneRequestVersion) return
+    if (!Array.isArray(rows)) throw new Error('苑区列表响应格式不正确')
+    batchZoneOptions.value = toSelectOptions(rows, ['id', 'zoneId', 'value'], ['zoneName', 'name', 'label'])
+  } catch (error) {
+    if (requestVersion === batchZoneRequestVersion) {
+      ElMessage.error(await requestErrorMessage(error, '苑区列表加载失败'))
+    }
+  } finally {
+    if (requestVersion === batchZoneRequestVersion) batchLocationLoading.zones = false
+  }
+}
+
+function handleDeleteZoneChange() {
+  resetBatchResult()
 }
 
 async function loadCollegeOptions() {
@@ -255,6 +365,7 @@ function resetBatchResult() {
   commitResult.value = null
   issueColumns.value = []
   issueRows.value = []
+  if (!isBatchTaskActive.value) importTask.value = null
 }
 
 function issueMessage(issue, level) {
@@ -361,34 +472,88 @@ function handleFileExceed() {
 }
 
 async function runBatchImport() {
-  if (batchLoading.value) return
+  if (batchLoading.value || isBatchTaskActive.value) return
   if (!batchFile.value) {
     ElMessage.warning('请先选择 Excel 文件')
     return
   }
+  if (!deleteZoneId.value) {
+    ElMessage.warning('请选择需要覆盖的苑区')
+    return
+  }
+
+  const confirmed = await ElMessageBox.confirm(
+    `导入将先清空“${selectedBatchZoneName.value}”的现有住宿数据，再按文件内容完整导入。此操作无法撤销，是否继续？`,
+    '确认全量覆盖',
+    {
+      confirmButtonText: '确认覆盖并导入',
+      cancelButtonText: '取消',
+      type: 'warning',
+    },
+  ).then(() => true).catch(() => false)
+  if (!confirmed) return
 
   batchLoading.value = true
   resetBatchResult()
   try {
-    const commitResponse = await commitStudentAccommodationImport(batchFile.value)
-    commitResult.value = unwrapResponse(commitResponse, '住宿信息导入失败')
-
-    try {
-      await createIssueTable(batchFile.value, commitResult.value)
-    } catch (error) {
-      ElMessage.warning(`数据已导入，但异常表生成失败：${error.message}`)
-      return
-    }
-
-    if (summary.value.failed > 0) {
-      ElMessage.warning(`已成功导入 ${summary.value.success} 条，另有 ${summary.value.failed} 条数据导入失败`)
-    } else {
-      ElMessage.success('住宿信息全部导入成功')
-    }
+    const taskResponse = await createStudentAccommodationImportTask(batchFile.value, undefined, deleteZoneId.value)
+    applyImportTask(unwrapResponse(taskResponse, '住宿信息导入任务创建失败'))
+    void pollImportTask(importTask.value.taskId)
   } catch (error) {
     ElMessage.error(await requestErrorMessage(error, '住宿信息导入失败'))
-  } finally {
     batchLoading.value = false
+  }
+}
+
+async function restoreCurrentImportTask() {
+  try {
+    const task = unwrapResponse(await getCurrentStudentAccommodationImportTask(), '导入任务状态加载失败')
+    if (!task) return
+    applyImportTask(task)
+    if (isBatchTaskActive.value) void pollImportTask(task.taskId)
+  } catch (error) {
+    ElMessage.error(await requestErrorMessage(error, '导入任务状态加载失败'))
+  }
+}
+
+function applyImportTask(task) {
+  importTask.value = task
+  batchLoading.value = ACTIVE_IMPORT_TASK_STATUSES.has(task.status)
+  if (task.deleteZoneId) deleteZoneId.value = task.deleteZoneId
+  if (!task.result) return
+
+  commitResult.value = task.result
+  issueColumns.value = task.issueRows?.length ? IMPORT_ISSUE_COLUMNS : []
+  issueRows.value = task.issueRows || []
+}
+
+async function pollImportTask(taskId) {
+  const pollingRunId = ++importTaskPollingRunId
+  while (pollingRunId === importTaskPollingRunId && importTask.value?.taskId === taskId && isBatchTaskActive.value) {
+    try {
+      const task = unwrapResponse(
+        await getStudentAccommodationImportTask(taskId, importTask.value.progressVersion),
+        '导入任务进度加载失败',
+      )
+      applyImportTask(task)
+      if (!isBatchTaskActive.value) notifyImportTaskCompletion(task)
+    } catch (error) {
+      if (pollingRunId !== importTaskPollingRunId) return
+      ElMessage.error(await requestErrorMessage(error, '导入任务进度加载失败，将继续尝试恢复连接'))
+      await new Promise((resolve) => window.setTimeout(resolve, 1000))
+    }
+  }
+}
+
+function notifyImportTaskCompletion(task) {
+  if (completedTaskNoticeId === task.taskId) return
+  completedTaskNoticeId = task.taskId
+  if (task.status === 'FAILED') {
+    ElMessage.error(task.errorMessage || '住宿信息导入失败')
+  } else if (task.result?.failedRows > 0) {
+    ElMessage.warning(`已成功导入 ${task.result.committedRows} 条，另有 ${task.result.failedRows} 条数据导入失败`)
+  } else {
+    ElMessage.success('住宿信息全部导入成功')
   }
 }
 
@@ -527,6 +692,65 @@ function resetSingleForm() {
             </el-button>
           </div>
 
+          <el-form class="batch-import-scope" label-position="top">
+            <el-form-item label="所属校区" required>
+              <el-select
+                v-model="batchCampusId"
+                clearable
+                filterable
+                :loading="batchLocationLoading.campuses"
+                :disabled="batchLoading"
+                placeholder="请选择校区"
+                @change="handleBatchCampusChange"
+              >
+                <el-option
+                  v-for="campus in batchCampusOptions"
+                  :key="campus.value"
+                  :label="campus.label"
+                  :value="campus.value"
+                />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="覆盖苑区" required>
+              <el-select
+                v-model="deleteZoneId"
+                clearable
+                filterable
+                :loading="batchLocationLoading.zones"
+                :disabled="!batchCampusId || batchLoading"
+                placeholder="请选择需要全量覆盖的苑区"
+                @change="handleDeleteZoneChange"
+              >
+                <el-option
+                  v-for="zone in batchZoneOptions"
+                  :key="zone.value"
+                  :label="zone.label"
+                  :value="zone.value"
+                />
+              </el-select>
+            </el-form-item>
+          </el-form>
+
+          <section v-if="importTask" class="import-progress" aria-labelledby="import-progress-title">
+            <div class="import-progress__heading">
+              <h3 id="import-progress-title">导入进度</h3>
+              <span>{{ importTaskStatusText }}</span>
+            </div>
+            <el-steps :active="importProgressStep" finish-status="success" process-status="process" align-center>
+              <el-step title="清空旧数据" :description="importTask.phase === 'CLEARING' ? '正在处理' : importProgressStep > 0 ? '已完成' : '等待处理'" />
+              <el-step
+                title="导入新数据"
+                :description="importTask.phase === 'IMPORTING' ? `${importTask.processedRows} / ${importTask.totalRows}` : importTask.status === 'SUCCEEDED' || importTask.status === 'PARTIAL_SUCCEEDED' ? '已完成' : '等待处理'"
+              />
+            </el-steps>
+            <el-progress
+              v-if="importTask.phase === 'IMPORTING' || importTask.status === 'SUCCEEDED' || importTask.status === 'PARTIAL_SUCCEEDED'"
+              :percentage="importProgressPercentage"
+              :status="importTask.status === 'PARTIAL_SUCCEEDED' ? 'warning' : importTask.status === 'SUCCEEDED' ? 'success' : undefined"
+              :stroke-width="10"
+            />
+          </section>
+
           <el-upload
             ref="uploadRef"
             v-model:file-list="fileList"
@@ -552,7 +776,7 @@ function resetSingleForm() {
               type="primary"
               :icon="UploadFilled"
               :loading="batchLoading"
-              :disabled="!batchFile"
+              :disabled="!batchFile || !deleteZoneId || isBatchTaskActive"
               @click="runBatchImport"
             >
               上传并导入
@@ -812,6 +1036,51 @@ function resetSingleForm() {
   line-height: 1.6;
 }
 
+.batch-import-scope {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 280px));
+  gap: 0 18px;
+  margin-bottom: 20px;
+}
+
+.batch-import-scope :deep(.el-form-item) {
+  margin-bottom: 0;
+}
+
+.batch-import-scope :deep(.el-select) {
+  width: 100%;
+}
+
+.import-progress {
+  margin-bottom: 20px;
+  padding: 18px 20px;
+  border: 1px solid #cfe0ff;
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.import-progress__heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.import-progress__heading h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.import-progress__heading span {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.import-progress :deep(.el-progress) {
+  margin-top: 18px;
+}
+
 .excel-uploader :deep(.el-upload) {
   width: 100%;
 }
@@ -997,6 +1266,18 @@ function resetSingleForm() {
 }
 
 @media (max-width: 900px) {
+  .batch-import-scope {
+    grid-template-columns: 1fr;
+    max-width: 560px;
+    gap: 14px;
+  }
+
+  .import-progress__heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
+
   .form-grid--three {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
