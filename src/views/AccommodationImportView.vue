@@ -280,14 +280,23 @@ async function createIssueTable(file, result) {
   issueColumns.value = sourceHeaders
     .map((label, sourceIndex) => ({ label, sourceIndex, prop: `column${sourceIndex}` }))
     .filter((column) => column.label && column.label !== '备注')
+  const counselorColumn = issueColumns.value.find((column) => column.label === '辅导员电话') || {
+    label: '辅导员电话',
+    sourceIndex: -1,
+    prop: 'counselorPhone',
+  }
+  issueColumns.value = issueColumns.value.filter((column) => column.label !== '辅导员电话')
+  issueColumns.value.push(counselorColumn)
 
   const issuesByRow = new Map()
+  const counselorPhonesByRow = new Map()
   const collectIssue = (issue, level) => {
     const rowNumber = Number(issue.rowNumber)
     if (!Number.isInteger(rowNumber) || rowNumber < 2) return
     const messages = issuesByRow.get(rowNumber) || []
     messages.push(issueMessage(issue, level))
     issuesByRow.set(rowNumber, messages)
+    counselorPhonesByRow.set(rowNumber, String(issue.counselorPhone ?? ''))
   }
 
   for (const issue of result.errors || []) collectIssue(issue, '错误')
@@ -299,8 +308,13 @@ async function createIssueTable(file, result) {
       const sourceRow = sourceRows[rowNumber - 1] || []
       const row = { rowNumber }
       issueColumns.value.forEach((column) => {
-        row[column.prop] = sourceRow[column.sourceIndex] ?? ''
+        row[column.prop] = column.sourceIndex >= 0 ? sourceRow[column.sourceIndex] ?? '' : ''
       })
+      const counselorPhone = counselorPhonesByRow.get(rowNumber)
+      if (counselorPhone !== undefined) {
+        const counselorColumn = issueColumns.value.find((column) => column.label === '辅导员电话')
+        if (counselorColumn) row[counselorColumn.prop] = counselorPhone
+      }
 
       const originalRemark = originalRemarkIndex >= 0 ? String(sourceRow[originalRemarkIndex] || '').trim() : ''
       row.remark = [originalRemark, ...messages].filter(Boolean).join('；')

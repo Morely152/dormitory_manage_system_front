@@ -31,7 +31,7 @@ function handleCommand(command) {
         <span class="brand__mark" aria-hidden="true">D</span>
         <span class="brand__text">
           <strong>学生公寓管理系统</strong>
-          <small>Dormitory Services</small>
+          <small>Dormitory Manage System</small>
         </span>
       </RouterLink>
 
