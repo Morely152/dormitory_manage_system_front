@@ -16,6 +16,7 @@ const implementedComponents = {
   'account-management': () => import('@/views/AccountManagementView.vue'),
   'room-management': () => import('@/views/RoomManagementView.vue'),
   'operation-log': () => import('@/views/OperationLogView.vue'),
+  'bed-allocation': () => import('@/views/BedAllocationView.vue'),
 }
 
 const businessRoutes = ACCESS_MODULES.map((module) => ({
