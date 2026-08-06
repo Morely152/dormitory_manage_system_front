@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { ArrowLeft, DataAnalysis, Download, List } from '@element-plus/icons-vue'
+import { ArrowLeft, DataAnalysis, Download, EditPen, List } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import html2canvas from 'html2canvas'
 import * as XLSX from 'xlsx'
@@ -8,6 +8,7 @@ import { ElMessage } from 'element-plus'
 import { getCollegeOptions } from '@/api/accommodationImport'
 import { getBeds } from '@/api/beds'
 import { getBuildings, getCampuses, getRooms, getZones } from '@/api/roomManagement'
+import AccommodationChangeApplicationView from '@/views/AccommodationChangeApplicationView.vue'
 
 const displayMode = ref('chart')
 // 空床位楼栋图的排序模式：默认按空床位数量从高到低排列。
@@ -32,6 +33,8 @@ const drilledCampusId = ref('')
 const drilledZoneId = ref('')
 const roomDetailVisible = ref(false)
 const selectedHeatmapRoom = ref(null)
+const changeApplicationVisible = ref(false)
+const selectedStudentNo = ref('')
 const studentNameInput = ref('')
 
 const DASHBOARD_COLORS = Object.freeze({
@@ -483,6 +486,20 @@ function getBedRowClassName({ row }) {
   const classes = [row.roomBackgroundClass]
   if (isAvailableBedStatus(row.bedStatusCode, row.bedStatus)) classes.push('available-bed-row')
   return classes.filter(Boolean).join(' ')
+}
+
+function canModifyStudent(row) {
+  return Boolean(row?.studentNo && row.studentNo !== '-')
+}
+
+function openStudentChangeDialog(row) {
+  if (!canModifyStudent(row)) return
+  selectedStudentNo.value = row.studentNo
+  changeApplicationVisible.value = true
+}
+
+function handleStudentInformationUpdated() {
+  loadBedRows()
 }
 
 function normalizeBedRows(rows) {
@@ -1630,6 +1647,20 @@ async function handleBuildingChange(buildingId) {
         <el-table-column fixed="right" prop="roomCode" label="寝室" min-width="110" show-overflow-tooltip />
         <el-table-column fixed="right" prop="bedCode" label="床位" min-width="100" show-overflow-tooltip />
         <el-table-column fixed="right" prop="bedStatus" label="床位状态" min-width="120" show-overflow-tooltip />
+        <el-table-column fixed="right" label="修改" width="96">
+          <template #default="{ row }">
+            <el-button
+              link
+              type="primary"
+              :icon="EditPen"
+              :disabled="!canModifyStudent(row)"
+              :aria-label="`修改${row.studentName}的学生信息`"
+              @click="openStudentChangeDialog(row)"
+            >
+              修改
+            </el-button>
+          </template>
+        </el-table-column>
         <!-- <el-table-column prop="changeType" label="变动类型" min-width="120" show-overflow-tooltip /> -->
       </el-table>
 
@@ -1827,6 +1858,24 @@ async function handleBuildingChange(buildingId) {
           <el-table-column prop="classTeacherPhone" label="班主任电话" min-width="150" show-overflow-tooltip />
         </el-table>
       </div>
+    </el-dialog>
+
+    <el-dialog
+      v-model="changeApplicationVisible"
+      class="student-change-dialog"
+      width="min(1120px, 94vw)"
+      append-to-body
+      destroy-on-close
+    >
+      <template #header>
+        <div class="student-change-dialog__title">学生信息修改</div>
+      </template>
+      <AccommodationChangeApplicationView
+        v-if="changeApplicationVisible"
+        embedded
+        :initial-student-no="selectedStudentNo"
+        @updated="handleStudentInformationUpdated"
+      />
     </el-dialog>
   </div>
 </template>
@@ -2448,6 +2497,30 @@ async function handleBuildingChange(buildingId) {
   color: #e8f1ff;
   background: linear-gradient(145deg, #0d1d35, #081528) !important;
   box-shadow: 0 22px 56px rgba(0, 0, 0, 0.52), 0 0 0 1px rgba(96, 165, 250, 0.08) inset;
+}
+
+:global(.student-change-dialog.el-dialog) {
+  --el-dialog-bg-color: var(--color-surface);
+  margin: 6vh auto;
+}
+
+:global(.student-change-dialog .el-dialog__header) {
+  margin-right: 0;
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+:global(.student-change-dialog .el-dialog__body) {
+  max-height: calc(88vh - 76px);
+  padding: 20px 24px 24px;
+  overflow-y: auto;
+}
+
+.student-change-dialog__title {
+  padding-right: 32px;
+  color: var(--color-text);
+  font-size: 18px;
+  font-weight: 700;
 }
 
 :global(.room-detail-dialog .el-dialog__header) {

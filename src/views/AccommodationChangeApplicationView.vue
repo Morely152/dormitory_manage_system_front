@@ -15,6 +15,19 @@ import {
   submitMajorChange,
 } from '@/api/accommodationChangeApplication'
 
+const props = defineProps({
+  embedded: {
+    type: Boolean,
+    default: false,
+  },
+  initialStudentNo: {
+    type: String,
+    default: '',
+  },
+})
+
+const emit = defineEmits(['updated'])
+
 const activeProcess = ref('major')
 const studentNo = ref('')
 const student = ref(null)
@@ -66,6 +79,18 @@ const dormitoryRules = {
 watch(activeProcess, () => {
   applicationResult.value = null
 })
+
+watch(
+  () => props.initialStudentNo,
+  (value) => {
+    if (!props.embedded) return
+    const normalizedStudentNo = String(value ?? '').trim()
+    if (!normalizedStudentNo) return
+    studentNo.value = normalizedStudentNo
+    queryStudent()
+  },
+  { immediate: true },
+)
 
 async function queryStudent() {
   const normalizedStudentNo = studentNo.value.trim()
@@ -234,6 +259,7 @@ async function submitTransferChange() {
       classTeacherPhone: transferForm.classTeacherPhone,
     })
     await resetTransferForm()
+    emit('updated')
     ElMessage.success(result.message)
   } catch (error) {
     ElMessage.error(error.message || '转专业信息修改失败')
@@ -283,8 +309,8 @@ async function submitDormitoryChange() {
         bedCode: selectedBed.value.bedCode,
       },
     }
+    emit('updated')
     ElMessage.success(result.message)
-    window.location.reload()
   } catch (error) {
     ElMessage.error(error.message || '寝室变更申请提交失败')
   } finally {
@@ -294,8 +320,8 @@ async function submitDormitoryChange() {
 </script>
 
 <template>
-  <main class="change-application-page">
-    <header class="change-application-page__header">
+  <main v-loading="embedded && queryLoading" class="change-application-page" element-loading-text="正在加载学生信息">
+    <header v-if="!embedded" class="change-application-page__header">
       <div>
         <p>申请处理</p>
         <h1>学生信息修改</h1>
@@ -303,7 +329,7 @@ async function submitDormitoryChange() {
       </div>
     </header>
 
-    <section class="query-card" aria-labelledby="student-query-title">
+    <section v-if="!embedded" class="query-card" aria-labelledby="student-query-title">
       <div class="card-heading">
         <span class="step-number" aria-hidden="true">1</span>
         <div>
