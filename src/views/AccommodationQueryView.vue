@@ -57,7 +57,7 @@ const DASHBOARD_COLORS = Object.freeze({
 const DASHBOARD_FONT = '"Source Han Sans SC", "Microsoft YaHei", sans-serif'
 const DASHBOARD_NUMBER_FONT = '"DIN Alternate", "Roboto Mono", Consolas, monospace'
 const DEFAULT_CAMPUS_NAME = '蓉江校区'
-const RONGJIANG_ZONE_NAMES = ['北苑', '西苑', '南苑']
+const RONGJIANG_ZONE_NAMES = ['北苑', '西一区', '西二区', '南苑']
 const BED_CACHE_TTL = 5 * 60 * 1000
 const CACHED_CHART_LOADING_DURATION = 280
 const bedRequestCache = new Map()
@@ -837,12 +837,22 @@ function buildZoneHeatmapGroups(rows, preferredZoneNames) {
   }))
 
   if (!preferredZoneNames.length) {
-    return groups.sort((zoneA, zoneB) => zoneA.name.localeCompare(zoneB.name, 'zh-CN', { numeric: true }))
+    return groups
+      .sort((zoneA, zoneB) => zoneA.name.localeCompare(zoneB.name, 'zh-CN', { numeric: true }))
+      .map((zone) => ({ ...zone, subZones: [zone] }))
   }
 
-  return preferredZoneNames.map((zoneName) => (
+  const orderedGroups = preferredZoneNames.map((zoneName) => (
     groups.find((zone) => zone.name === zoneName) || { id: `name:${zoneName}`, name: zoneName, buildings: [] }
   ))
+  const westSecond = orderedGroups.find((zone) => zone.name === '西二区')
+
+  return orderedGroups
+    .filter((zone) => zone.name !== '西二区')
+    .map((zone) => ({
+      ...zone,
+      subZones: zone.name === '西一区' && westSecond ? [zone, westSecond] : [zone],
+    }))
 }
 
 function setBuildingHeatmapChartRef(buildingId, element) {
@@ -1096,7 +1106,7 @@ function renderBuildingHeatmaps() {
   const compactMode = isZoneOverview.value
 
   zoneHeatmapGroups.value.forEach((zone) => {
-    zone.buildings.forEach((building) => {
+    zone.subZones.forEach((subZone) => subZone.buildings.forEach((building) => {
       activeBuildingIds.add(building.id)
       const chartElement = buildingHeatmapChartRefs.get(building.id)
       if (!chartElement) return
@@ -1114,7 +1124,7 @@ function renderBuildingHeatmaps() {
       })
       chart?.setOption({
         animationDuration: 300,
-        aria: { enabled: true, description: `${zone.name}${building.name}寝室状态热力图` },
+        aria: { enabled: true, description: `${subZone.name}${building.name}寝室状态热力图` },
         tooltip: {
           show: true,
           position: 'top',
@@ -1179,7 +1189,7 @@ function renderBuildingHeatmaps() {
         }],
       }, true)
       requestAnimationFrame(() => chart?.resize())
-    })
+    }))
   })
 
   buildingHeatmapCharts.forEach((chart, buildingId) => {
@@ -1797,21 +1807,26 @@ async function handleBuildingChange(buildingId) {
                 'zone-heatmap-grid--single': zoneHeatmapGroups.length === 1,
                 'zone-heatmap-grid--single-building': zoneHeatmapGroups.length === 1 && zoneHeatmapGroups[0]?.buildings.length === 1,
               }"
-            >
+              >
               <section v-for="zone in zoneHeatmapGroups" :key="zone.id" class="zone-heatmap-column">
                 <h4>{{ zone.name }}</h4>
-                <div v-if="zone.buildings.length" class="zone-heatmap-buildings">
-                  <article v-for="building in zone.buildings" :key="building.id" class="building-heatmap-card">
-                    <h5>{{ building.name }}</h5>
-                    <div
-                      :ref="(element) => setBuildingHeatmapChartRef(building.id, element)"
-                      class="building-heatmap-canvas"
-                      role="img"
-                      :aria-label="`${zone.name}${building.name}寝室状态热力图`"
-                    ></div>
-                  </article>
+                <div class="zone-heatmap-subzones">
+                  <section v-for="subZone in zone.subZones" :key="subZone.id" class="zone-heatmap-subzone">
+                    <h5 v-if="zone.subZones.length > 1" class="zone-heatmap-subzone__title">{{ subZone.name }}</h5>
+                    <div v-if="subZone.buildings.length" class="zone-heatmap-buildings">
+                      <article v-for="building in subZone.buildings" :key="building.id" class="building-heatmap-card">
+                        <h5>{{ building.name }}</h5>
+                        <div
+                          :ref="(element) => setBuildingHeatmapChartRef(building.id, element)"
+                          class="building-heatmap-canvas"
+                          role="img"
+                          :aria-label="`${subZone.name}${building.name}寝室状态热力图`"
+                        ></div>
+                      </article>
+                    </div>
+                    <p v-else class="zone-heatmap-empty">暂无{{ subZone.name }}住宿数据</p>
+                  </section>
                 </div>
-                <p v-else class="zone-heatmap-empty">暂无{{ zone.name }}住宿数据</p>
               </section>
             </div>
           </article>
@@ -2417,6 +2432,25 @@ async function handleBuildingChange(buildingId) {
   margin-bottom: 6px;
   color: #bfdbfe;
   font-size: 13px;
+}
+
+.zone-heatmap-subzones,
+.zone-heatmap-subzone {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+
+.zone-heatmap-subzones {
+  gap: 8px;
+}
+
+.zone-heatmap-subzone__title {
+  margin: 0 0 4px;
+  color: #bfdbfe;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .zone-heatmap-buildings {
