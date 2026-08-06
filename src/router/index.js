@@ -9,9 +9,10 @@ const implementedComponents = {
   'accommodation-change-log': () => import('@/views/AccommodationChangeLogView.vue'),
   'change-review': () => import('@/views/AccommodationChangeReviewView.vue'),
   'change-application': () => import('@/views/AccommodationChangeApplicationView.vue'),
+  /* Disabled pages retained for future restoration.
   'error-information-correction-review': () =>
     import('@/views/ErrorInformationCorrectionReviewView.vue'),
-  'student-confirmation': () => import('@/views/student/StudentConfirmationView.vue'),
+  'student-confirmation': () => import('@/views/student/StudentConfirmationView.vue'), */
   'student-bed-information': () => import('@/views/student/StudentBedInformationView.vue'),
   'account-management': () => import('@/views/AccountManagementView.vue'),
   'room-management': () => import('@/views/RoomManagementView.vue'),
@@ -70,10 +71,11 @@ const router = createRouter({
         },
         ...subsystemRoutes,
         ...businessRoutes,
+        /* Student confirmation is disabled; keep the legacy redirect for future restoration.
         {
           path: 'student',
           redirect: { name: 'StudentConfirmation' },
-        },
+        }, */
         {
           path: '403',
           name: 'Forbidden',

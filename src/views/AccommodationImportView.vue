@@ -7,7 +7,7 @@ import {
   Download,
   UploadFilled,
 } from '@element-plus/icons-vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import * as XLSX from 'xlsx'
 import {
   createStudentAccommodationImportTask,
@@ -54,15 +54,6 @@ const templateLoading = ref(false)
 const commitResult = ref(null)
 const issueColumns = ref([])
 const issueRows = ref([])
-const batchCampusOptions = ref([])
-const batchZoneOptions = ref([])
-const batchCampusId = ref('')
-const deleteZoneId = ref('')
-const batchLocationLoading = reactive({
-  campuses: false,
-  zones: false,
-})
-let batchZoneRequestVersion = 0
 let importTaskPollingRunId = 0
 let completedTaskNoticeId = ''
 
@@ -87,15 +78,11 @@ const importProgressStep = computed(() => {
 const importTaskStatusText = computed(() => {
   if (!importTask.value) return ''
   if (importTask.value.phase === 'WAITING') return '任务已创建，正在等待处理'
-  if (importTask.value.phase === 'CLEARING') return '正在清空所选苑区的旧住宿数据'
+  if (importTask.value.phase === 'CLEARING') return '正在准备导入数据'
   if (importTask.value.phase === 'IMPORTING') return `正在导入新数据：${importTask.value.processedRows} / ${importTask.value.totalRows}`
   if (importTask.value.status === 'FAILED') return importTask.value.errorMessage || '导入任务执行失败'
   return '导入任务已完成'
 })
-const selectedBatchZoneName = computed(() => (
-  batchZoneOptions.value.find((zone) => String(zone.value) === String(deleteZoneId.value))?.label || ''
-))
-
 const singleFormRef = ref()
 const singleLoading = ref(false)
 const collegeLoading = ref(false)
@@ -141,7 +128,6 @@ onMounted(() => {
   handleViewportChange(mobileMediaQuery)
   mobileMediaQuery.addEventListener('change', handleViewportChange)
   loadCollegeOptions()
-  loadBatchCampusOptions()
   void restoreCurrentImportTask()
 })
 
@@ -191,56 +177,6 @@ function compareResourceRows(rowA, rowB, idFields) {
   const numberB = Number(valueB)
   if (Number.isFinite(numberA) && Number.isFinite(numberB)) return numberA - numberB
   return String(valueA ?? '').localeCompare(String(valueB ?? ''), 'zh-CN', { numeric: true })
-}
-
-function toSelectOptions(rows, idFields, nameFields) {
-  return [...rows]
-    .sort((rowA, rowB) => compareResourceRows(rowA, rowB, idFields))
-    .map((row) => {
-      const value = firstDefined(row, idFields)
-      const label = String(firstDefined(row, nameFields) ?? '').trim()
-      return value === undefined || !label ? null : { value, label }
-    })
-    .filter(Boolean)
-}
-
-async function loadBatchCampusOptions() {
-  batchLocationLoading.campuses = true
-  try {
-    const rows = unwrapResponse(await getCampuses(), '校区列表加载失败')
-    if (!Array.isArray(rows)) throw new Error('校区列表响应格式不正确')
-    batchCampusOptions.value = toSelectOptions(rows, ['id', 'campusId', 'value'], ['campusName', 'name', 'label'])
-  } catch (error) {
-    ElMessage.error(await requestErrorMessage(error, '校区列表加载失败'))
-  } finally {
-    batchLocationLoading.campuses = false
-  }
-}
-
-async function handleBatchCampusChange() {
-  const requestVersion = ++batchZoneRequestVersion
-  deleteZoneId.value = ''
-  batchZoneOptions.value = []
-  resetBatchResult()
-  if (!batchCampusId.value) return
-
-  batchLocationLoading.zones = true
-  try {
-    const rows = unwrapResponse(await getZones(batchCampusId.value), '苑区列表加载失败')
-    if (requestVersion !== batchZoneRequestVersion) return
-    if (!Array.isArray(rows)) throw new Error('苑区列表响应格式不正确')
-    batchZoneOptions.value = toSelectOptions(rows, ['id', 'zoneId', 'value'], ['zoneName', 'name', 'label'])
-  } catch (error) {
-    if (requestVersion === batchZoneRequestVersion) {
-      ElMessage.error(await requestErrorMessage(error, '苑区列表加载失败'))
-    }
-  } finally {
-    if (requestVersion === batchZoneRequestVersion) batchLocationLoading.zones = false
-  }
-}
-
-function handleDeleteZoneChange() {
-  resetBatchResult()
 }
 
 async function loadCollegeOptions() {
@@ -477,23 +413,10 @@ async function runBatchImport() {
     ElMessage.warning('请先选择 Excel 文件')
     return
   }
-  if (deleteZoneId.value) {
-    const confirmed = await ElMessageBox.confirm(
-      `导入将先清空“${selectedBatchZoneName.value}”的现有住宿数据，再按文件内容完整导入。此操作无法撤销，是否继续？`,
-      '确认全量覆盖',
-      {
-        confirmButtonText: '确认覆盖并导入',
-        cancelButtonText: '取消',
-        type: 'warning',
-      },
-    ).then(() => true).catch(() => false)
-    if (!confirmed) return
-  }
-
   batchLoading.value = true
   resetBatchResult()
   try {
-    const taskResponse = await createStudentAccommodationImportTask(batchFile.value, undefined, deleteZoneId.value)
+    const taskResponse = await createStudentAccommodationImportTask(batchFile.value)
     applyImportTask(unwrapResponse(taskResponse, '住宿信息导入任务创建失败'))
     void pollImportTask(importTask.value.taskId)
   } catch (error) {
@@ -516,7 +439,6 @@ async function restoreCurrentImportTask() {
 function applyImportTask(task) {
   importTask.value = task
   batchLoading.value = ACTIVE_IMPORT_TASK_STATUSES.has(task.status)
-  if (task.deleteZoneId) deleteZoneId.value = task.deleteZoneId
   if (!task.result) return
 
   commitResult.value = task.result
@@ -689,52 +611,13 @@ function resetSingleForm() {
             </el-button>
           </div>
 
-          <el-form class="batch-import-scope" label-position="top">
-            <el-form-item label="所属校区（可选）">
-              <el-select
-                v-model="batchCampusId"
-                clearable
-                filterable
-                :loading="batchLocationLoading.campuses"
-                :disabled="batchLoading"
-                placeholder="请选择校区"
-                @change="handleBatchCampusChange"
-              >
-                <el-option
-                  v-for="campus in batchCampusOptions"
-                  :key="campus.value"
-                  :label="campus.label"
-                  :value="campus.value"
-                />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="覆盖苑区（可选）">
-              <el-select
-                v-model="deleteZoneId"
-                clearable
-                filterable
-                :loading="batchLocationLoading.zones"
-                :disabled="!batchCampusId || batchLoading"
-                placeholder="请选择需要全量覆盖的苑区"
-                @change="handleDeleteZoneChange"
-              >
-                <el-option
-                  v-for="zone in batchZoneOptions"
-                  :key="zone.value"
-                  :label="zone.label"
-                  :value="zone.value"
-                />
-              </el-select>
-            </el-form-item>
-          </el-form>
-
           <section v-if="importTask" class="import-progress" aria-labelledby="import-progress-title">
             <div class="import-progress__heading">
               <h3 id="import-progress-title">导入进度</h3>
               <span>{{ importTaskStatusText }}</span>
             </div>
             <el-steps :active="importProgressStep" finish-status="success" process-status="process" align-center>
-              <el-step title="清空旧数据" :description="importTask.phase === 'CLEARING' ? '正在处理' : importProgressStep > 0 ? '已完成' : '等待处理'" />
+              <el-step title="准备导入" :description="importTask.phase === 'CLEARING' ? '正在处理' : importProgressStep > 0 ? '已完成' : '等待处理'" />
               <el-step
                 title="导入新数据"
                 :description="importTask.phase === 'IMPORTING' ? `${importTask.processedRows} / ${importTask.totalRows}` : importTask.status === 'SUCCEEDED' || importTask.status === 'PARTIAL_SUCCEEDED' ? '已完成' : '等待处理'"
@@ -1033,21 +916,6 @@ function resetSingleForm() {
   line-height: 1.6;
 }
 
-.batch-import-scope {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 280px));
-  gap: 0 18px;
-  margin-bottom: 20px;
-}
-
-.batch-import-scope :deep(.el-form-item) {
-  margin-bottom: 0;
-}
-
-.batch-import-scope :deep(.el-select) {
-  width: 100%;
-}
-
 .import-progress {
   margin-bottom: 20px;
   padding: 18px 20px;
@@ -1263,12 +1131,6 @@ function resetSingleForm() {
 }
 
 @media (max-width: 900px) {
-  .batch-import-scope {
-    grid-template-columns: 1fr;
-    max-width: 560px;
-    gap: 14px;
-  }
-
   .import-progress__heading {
     align-items: flex-start;
     flex-direction: column;

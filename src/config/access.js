@@ -197,6 +197,7 @@ export const ACCESS_MODULES = Object.freeze([
     operation: 'edit',
     roles: [ROLE_KEYS.SYSTEM_ADMIN, ROLE_KEYS.DORMITORY_ADMIN, ROLE_KEYS.COUNSELOR],
   },
+  /* Disabled pages retained for future restoration.
   {
     id: 'error-information-correction-review',
     subsystem: SUBSYSTEM_KEYS.BED,
@@ -223,6 +224,7 @@ export const ACCESS_MODULES = Object.freeze([
     operation: 'edit',
     roles: [ROLE_KEYS.STUDENT],
   },
+  }, */
   {
     id: 'student-bed-information',
     subsystem: SUBSYSTEM_KEYS.BED,
