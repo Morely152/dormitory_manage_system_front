@@ -112,7 +112,7 @@ export const ACCESS_MODULES = Object.freeze([
       [ROLE_KEYS.DORMITORY_ADMIN]: '查看全校学生住宿与床位使用情况。',
       [ROLE_KEYS.ZONE_MANAGER]: '查看分管苑区学生住宿与床位使用情况。',
       [ROLE_KEYS.ZONE_ADMIN]: '查看分管苑区学生住宿与床位使用情况。',
-      [ROLE_KEYS.COUNSELOR]: '查看分管学院学生住宿与床位使用情况。',
+      [ROLE_KEYS.COUNSELOR]: '查看全校学生住宿与床位使用情况。',
       [ROLE_KEYS.READONLY_USER]: '只读查看全校学生住宿与床位使用情况。',
     },
   },

@@ -63,7 +63,6 @@ const transferRules = {
   collegeId: [{ required: true, message: '请选择转入学院', trigger: 'change' }],
   majorName: [{ required: true, message: '请填写转入专业', trigger: 'blur' }],
   className: [{ required: true, message: '请填写转入班级', trigger: 'blur' }],
-  counselorId: [{ required: true, message: '请选择辅导员', trigger: 'change' }],
   classTeacherName: [{ required: true, message: '请填写班主任姓名', trigger: 'blur' }],
   classTeacherPhone: [{ required: true, message: '请填写班主任电话', trigger: 'blur' }],
 }
@@ -242,7 +241,7 @@ async function submitTransferChange() {
       collegeId: transferForm.collegeId,
       majorName: transferForm.majorName,
       className: transferForm.className,
-      counselorId: transferForm.counselorId,
+      counselorId: transferForm.counselorId || null,
       classTeacher: transferForm.classTeacherName,
       classTeacherPhone: transferForm.classTeacherPhone,
     })
@@ -252,9 +251,9 @@ async function submitTransferChange() {
       collegeName: selectedCollege?.name || student.value.collegeName,
       majorName: transferForm.majorName,
       className: transferForm.className,
-      counselorId: transferForm.counselorId,
-      counselorName: selectedCounselor.value?.name || student.value.counselorName,
-      counselorPhone: selectedCounselor.value?.phone || student.value.counselorPhone,
+      counselorId: transferForm.counselorId || null,
+      counselorName: selectedCounselor.value?.name || '',
+      counselorPhone: selectedCounselor.value?.phone || '',
       classTeacherName: transferForm.classTeacherName,
       classTeacherPhone: transferForm.classTeacherPhone,
     })
@@ -408,7 +407,7 @@ async function submitDormitoryChange() {
               <el-form-item label="转入班级" prop="className"><el-input v-model.trim="transferForm.className"
                   placeholder="请输入转入班级" /></el-form-item>
               <el-form-item label="辅导员" prop="counselorId">
-                <el-select v-model="transferForm.counselorId" placeholder="请选择辅导员">
+                <el-select v-model="transferForm.counselorId" clearable placeholder="请选择辅导员（可选）">
                   <el-option v-for="counselor in counselors" :key="counselor.id"
                     :label="`${counselor.name} · ${counselor.phone}`" :value="counselor.id" />
                 </el-select>
