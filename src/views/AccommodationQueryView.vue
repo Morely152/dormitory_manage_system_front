@@ -218,12 +218,24 @@ const activeZoneId = computed(() => (
   filters.zone ? getLocationKey(filters.zone, '') : drilledZoneId.value
 ))
 const regionLevel = computed(() => (activeZoneId.value ? 'building' : (activeCampusId.value ? 'zone' : 'campus')))
-const regionDistribution = computed(() => buildRegionDistribution(
-  dashboardRows.value,
-  regionLevel.value,
-  activeCampusId.value,
-  activeZoneId.value,
-))
+const regionDistribution = computed(() => {
+  const distribution = buildRegionDistribution(
+    dashboardRows.value,
+    regionLevel.value,
+    activeCampusId.value,
+    activeZoneId.value,
+  )
+
+  if (!isRongjiangCampus.value || regionLevel.value !== 'zone') return distribution
+
+  return [...distribution].sort((regionA, regionB) => {
+    const orderA = RONGJIANG_ZONE_NAMES.indexOf(regionA.name)
+    const orderB = RONGJIANG_ZONE_NAMES.indexOf(regionB.name)
+    const positionA = orderA === -1 ? Number.MAX_SAFE_INTEGER : orderA
+    const positionB = orderB === -1 ? Number.MAX_SAFE_INTEGER : orderB
+    return positionA - positionB || regionA.name.localeCompare(regionB.name, 'zh-CN', { numeric: true })
+  })
+})
 const canReturnRegion = computed(() => Boolean(filters.zone || filters.building))
 const selectedRoomBedRows = computed(() => {
   const roomKey = selectedHeatmapRoom.value?.key
@@ -849,10 +861,17 @@ function buildZoneHeatmapGroups(rows, preferredZoneNames) {
 
   return orderedGroups
     .filter((zone) => zone.name !== '西二区')
-    .map((zone) => ({
-      ...zone,
-      subZones: zone.name === '西一区' && westSecond ? [zone, westSecond] : [zone],
-    }))
+    .map((zone) => {
+      if (zone.name !== '西一区' || !westSecond) return { ...zone, subZones: [zone] }
+
+      const buildings = [...zone.buildings, ...westSecond.buildings]
+      const westZone = {
+        id: zone.id,
+        name: '西苑',
+        buildings,
+      }
+      return { ...westZone, subZones: [westZone] }
+    })
 }
 
 function setBuildingHeatmapChartRef(buildingId, element) {
@@ -2462,6 +2481,28 @@ async function handleBuildingChange(buildingId) {
   gap: 6px;
   overflow-y: auto;
   padding-right: 3px;
+  scrollbar-color: rgba(147, 197, 253, 0.52) rgba(5, 18, 38, 0.52);
+  scrollbar-width: thin;
+}
+
+.zone-heatmap-buildings::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.zone-heatmap-buildings::-webkit-scrollbar-track {
+  border-radius: 999px;
+  background: rgba(5, 18, 38, 0.52);
+}
+
+.zone-heatmap-buildings::-webkit-scrollbar-thumb {
+  border: 2px solid rgba(5, 18, 38, 0.52);
+  border-radius: 999px;
+  background: linear-gradient(180deg, #60a5fa, #2563eb);
+}
+
+.zone-heatmap-buildings::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #93c5fd, #3b82f6);
 }
 
 .zone-heatmap-grid--single-building .zone-heatmap-buildings {
