@@ -949,15 +949,6 @@ function getHeatmapDataValues(params) {
   return Array.isArray(params.data) ? params.data : params.data?.value ?? params.value
 }
 
-function getHeatmapCellData(data) {
-  if (!data[8]) return data
-
-  return {
-    value: data,
-    itemStyle: { borderWidth: 0 },
-  }
-}
-
 function renderGraduateRoomOutline(params, api) {
   const [centerX, centerY] = api.coord([api.value(0), api.value(1)])
   const cellWidth = Math.abs(params.coordSys.width / api.value(6))
@@ -967,7 +958,7 @@ function renderGraduateRoomOutline(params, api) {
   const top = centerY - cellHeight / 2
   const bottom = centerY + cellHeight / 2
   const outlineStyle = {
-    stroke: '#22d3ee',
+    stroke: '#FFFFFF',
     lineWidth: 2,
     lineCap: 'square',
     lineJoin: 'round',
@@ -1373,7 +1364,8 @@ function renderBuildingHeatmaps() {
           name: '寝室状态',
           type: 'heatmap',
           cursor: 'pointer',
-          data: building.heatmap.data.map(getHeatmapCellData),
+          z: 2,
+          data: building.heatmap.data,
           label: {
             show: !compactMode,
             color: '#091526',
@@ -2617,7 +2609,7 @@ async function handleBuildingChange(buildingId) {
 }
 
 .heatmap-legend__marker--graduate {
-  border: 1px solid #22d3ee;
+  border: 1px solid #FFFFFF;
   background: rgba(34, 211, 238, 0.28);
   box-shadow: 0 0 6px rgba(34, 211, 238, 0.8);
 }
