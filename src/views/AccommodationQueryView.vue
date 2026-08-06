@@ -771,7 +771,10 @@ async function loadChartRows() {
 
 function getOrCreateChart(chart, element) {
   if (!element) return chart
-  return chart || echarts.init(element)
+  if (chart?.getDom() === element) return chart
+
+  chart?.dispose()
+  return echarts.getInstanceByDom(element) || echarts.init(element)
 }
 
 function getLocationKey(id, fallback) {
