@@ -11,15 +11,28 @@ const auth = useAuthStore()
 const subsystem = computed(() => getSubsystem(route.meta.subsystemId))
 const modules = computed(() => getModulesForRole(auth.currentRole.value, subsystem.value?.id))
 const groupedModules = computed(() => {
-  return modules.value.reduce((groups, module) => {
-    const group = groups.find((item) => item.name === module.group)
+  const groups = modules.value.reduce((items, module) => {
+    const group = items.find((item) => item.name === (module.workspaceGroup || module.group))
     if (group) {
       group.modules.push(module)
     } else {
-      groups.push({ name: module.group, modules: [module] })
+      items.push({
+        name: module.workspaceGroup || module.group,
+        order: module.workspaceGroupOrder ?? Number.MAX_SAFE_INTEGER,
+        modules: [module],
+      })
     }
-    return groups
+    return items
   }, [])
+
+  return groups
+    .map((group) => ({
+      ...group,
+      modules: [...group.modules].sort(
+        (left, right) => (left.workspaceOrder ?? 0) - (right.workspaceOrder ?? 0),
+      ),
+    }))
+    .sort((left, right) => left.order - right.order)
 })
 </script>
 

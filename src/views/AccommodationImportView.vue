@@ -477,21 +477,18 @@ async function runBatchImport() {
     ElMessage.warning('请先选择 Excel 文件')
     return
   }
-  if (!deleteZoneId.value) {
-    ElMessage.warning('请选择需要覆盖的苑区')
-    return
+  if (deleteZoneId.value) {
+    const confirmed = await ElMessageBox.confirm(
+      `导入将先清空“${selectedBatchZoneName.value}”的现有住宿数据，再按文件内容完整导入。此操作无法撤销，是否继续？`,
+      '确认全量覆盖',
+      {
+        confirmButtonText: '确认覆盖并导入',
+        cancelButtonText: '取消',
+        type: 'warning',
+      },
+    ).then(() => true).catch(() => false)
+    if (!confirmed) return
   }
-
-  const confirmed = await ElMessageBox.confirm(
-    `导入将先清空“${selectedBatchZoneName.value}”的现有住宿数据，再按文件内容完整导入。此操作无法撤销，是否继续？`,
-    '确认全量覆盖',
-    {
-      confirmButtonText: '确认覆盖并导入',
-      cancelButtonText: '取消',
-      type: 'warning',
-    },
-  ).then(() => true).catch(() => false)
-  if (!confirmed) return
 
   batchLoading.value = true
   resetBatchResult()
@@ -693,7 +690,7 @@ function resetSingleForm() {
           </div>
 
           <el-form class="batch-import-scope" label-position="top">
-            <el-form-item label="所属校区" required>
+            <el-form-item label="所属校区（可选）">
               <el-select
                 v-model="batchCampusId"
                 clearable
@@ -711,7 +708,7 @@ function resetSingleForm() {
                 />
               </el-select>
             </el-form-item>
-            <el-form-item label="覆盖苑区" required>
+            <el-form-item label="覆盖苑区（可选）">
               <el-select
                 v-model="deleteZoneId"
                 clearable
@@ -776,7 +773,7 @@ function resetSingleForm() {
               type="primary"
               :icon="UploadFilled"
               :loading="batchLoading"
-              :disabled="!batchFile || !deleteZoneId || isBatchTaskActive"
+              :disabled="!batchFile || isBatchTaskActive"
               @click="runBatchImport"
             >
               上传并导入

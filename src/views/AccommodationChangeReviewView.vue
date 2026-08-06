@@ -139,8 +139,8 @@ onMounted(loadRecords)
           <DocumentChecked />
         </el-icon></div>
       <div>
-        <p>申请处理</p>
-        <h1>住宿信息修改确认</h1>
+        <p>审核处理</p>
+        <h1>住宿信息修改审核</h1>
         <span>核对待生效的寝室变更申请；仅宿管中心管理员确认通过后，住宿信息才会正式生效。</span>
       </div>
     </header>

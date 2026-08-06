@@ -111,7 +111,7 @@ const filteredBedRows = computed(() => {
   let roomGroupIndex = -1
 
   return rows.map((row) => {
-    const roomKey = row.roomId ?? `${row.campusName}|${row.zoneName}|${row.buildingName}|${row.roomCode}`
+    const roomKey = getRoomGroupKey(row)
     if (roomKey !== previousRoomKey) {
       roomGroupIndex += 1
       previousRoomKey = roomKey
@@ -514,6 +514,84 @@ function handleStudentInformationUpdated() {
   loadBedRows()
 }
 
+const CHINESE_BUILDING_NUMBER_MAP = Object.freeze({
+  一: 1,
+  二: 2,
+  三: 3,
+  四: 4,
+  五: 5,
+  六: 6,
+  七: 7,
+  八: 8,
+  九: 9,
+  两: 2,
+})
+
+function extractBuildingNumber(buildingName) {
+  const matched = String(buildingName ?? '').match(/([一二三四五六七八九十两\d]+)栋/)
+  if (!matched) return ''
+
+  const value = matched[1]
+  let buildingNumber
+  if (/^\d+$/.test(value)) {
+    buildingNumber = Number(value)
+  } else if (value.includes('十')) {
+    const [tensText, onesText] = value.split('十')
+    const tens = tensText ? CHINESE_BUILDING_NUMBER_MAP[tensText] : 1
+    const ones = onesText ? CHINESE_BUILDING_NUMBER_MAP[onesText] : 0
+    buildingNumber = tens * 10 + ones
+  } else {
+    buildingNumber = CHINESE_BUILDING_NUMBER_MAP[value]
+  }
+
+  return Number.isInteger(buildingNumber) && buildingNumber >= 1 && buildingNumber <= 20
+    ? String(buildingNumber)
+    : ''
+}
+
+function formatDormitoryNo(zoneName, buildingName, roomCode) {
+  const zoneInitial = String(zoneName ?? '').trim().charAt(0)
+  const room = String(roomCode ?? '').trim()
+  const buildingNumber = extractBuildingNumber(buildingName)
+  if (!zoneInitial || zoneInitial === '-' || !buildingNumber || !room || room === '-') return '-'
+  return `${zoneInitial}${buildingNumber}-${room}`
+}
+
+function formatBedNo(value) {
+  return String(value ?? '').match(/\d+/)?.[0] || '-'
+}
+
+function getRoomGroupKey(row) {
+  return row.roomId ?? `${row.campusName}|${row.zoneName}|${row.buildingName}|${row.roomCode}`
+}
+
+function getDormitoryRowSpan(rows, rowIndex) {
+  const roomKey = getRoomGroupKey(rows[rowIndex])
+  if (rowIndex > 0 && getRoomGroupKey(rows[rowIndex - 1]) === roomKey) return 0
+
+  let rowSpan = 1
+  while (rowIndex + rowSpan < rows.length && getRoomGroupKey(rows[rowIndex + rowSpan]) === roomKey) {
+    rowSpan += 1
+  }
+  return rowSpan
+}
+
+function getBedTableSpan({ column, rowIndex }) {
+  if (column.property !== 'dormitoryNo') return [1, 1]
+
+  const rowSpan = getDormitoryRowSpan(filteredBedRows.value, rowIndex)
+  return rowSpan ? [rowSpan, 1] : [0, 0]
+}
+
+function getDormitoryCellMerges(rows) {
+  const merges = []
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+    const rowSpan = getDormitoryRowSpan(rows, rowIndex)
+    if (rowSpan > 1) merges.push({ s: { r: rowIndex + 1, c: 0 }, e: { r: rowIndex + rowSpan, c: 0 } })
+  }
+  return merges
+}
+
 function normalizeBedRows(rows) {
   return rows.map((source, index) => {
     const bedStatus = firstDefined(source, [
@@ -533,6 +611,8 @@ function normalizeBedRows(rows) {
       gender: displayValue(source, ['studentGenderName', 'genderName', 'gender', 'sex', '性别']),
       roomGender: displayValue(source, ['roomGenderName', 'roomGender', 'buildingGenderName', 'buildingGenderCode']),
       collegeName: displayValue(source, ['studentCollegeName', 'collegeName', 'college', 'collegeLabel', '学院', '学院名称']),
+      className: displayValue(source, ['studentClassName', 'className', 'class', 'studentClass']),
+      mobile: displayValue(source, ['studentMobile', 'mobile', 'studentPhone', 'phone']),
       counselorName: displayValue(source, ['studentCounselorName']),
       counselorPhone: displayValue(source, ['studentCounselorPhone']),
       classTeacherName: displayValue(source, ['studentClassTeacher']),
@@ -542,7 +622,12 @@ function normalizeBedRows(rows) {
       buildingName: displayValue(source, ['buildingName', 'building', 'buildingLabel', '楼栋', '楼栋名称']),
       floor: displayValue(source, ['floorNo', 'floor', 'floorNumber', '楼层']),
       roomCode: displayValue(source, ['roomCode', 'roomNo', 'roomNumber', 'roomName', '寝室', '房间号']),
-      bedCode: displayValue(source, ['bedName', 'bedCode', 'bedNo', 'bedNumber', '床位', '床位号']),
+      dormitoryNo: formatDormitoryNo(
+        displayValue(source, ['zoneName', 'zone', 'zoneLabel', '苑区', '苑区名称']),
+        displayValue(source, ['buildingName', 'building', 'buildingLabel', '楼栋', '楼栋名称']),
+        displayValue(source, ['roomCode', 'roomNo', 'roomNumber', 'roomName', '寝室', '房间号']),
+      ),
+      bedCode: formatBedNo(firstDefined(source, ['bedCode', 'bedNo', 'bedNumber', 'bedName', '床位', '床位号'])),
       bedStatusCode: firstDefined(source, ['statusCode', 'bedStatusCode', 'status', 'bedStatus']) ?? bedStatus,
       bedStatus: formatBedStatus(bedStatus),
       changeType: displayValue(source, ['changeTypeName', 'changeType', 'changeTypeCode', '变动类型']),
@@ -630,7 +715,7 @@ async function loadBedRows() {
 
   try {
     const data = unwrapResponse(await getCachedBeds(
-      needsCollegeFilter ? buildBedQuery(undefined, undefined, true) : buildBedQuery(pagination.currentPage - 1, pagination.pageSize, true),
+      needsCollegeFilter ? buildBedQuery(undefined, undefined, true) : buildBedQuery(pagination.currentPage, pagination.pageSize, true),
     ), '床位列表加载失败')
     if (!Array.isArray(data?.items)) {
       throw new Error('床位分页响应格式不正确')
@@ -1280,21 +1365,18 @@ async function exportDashboardImage() {
 }
 
 const EXCEL_COLUMNS = [
-  { label: '学号', key: 'studentNo', width: 16 },
+  { label: '寝室号', key: 'dormitoryNo', width: 12 },
+  { label: '床位号', key: 'bedCode', width: 10 },
   { label: '姓名', key: 'studentName', width: 14 },
   { label: '性别', key: 'gender', width: 10 },
   { label: '学院', key: 'collegeName', width: 28 },
-  { label: '辅导员', key: 'counselorName', width: 16 },
-  { label: '辅导员电话', key: 'counselorPhone', width: 18 },
+  { label: '班级', key: 'className', width: 20 },
+  { label: '手机号', key: 'mobile', width: 16 },
+  { label: '学号', key: 'studentNo', width: 16 },
   { label: '班主任', key: 'classTeacherName', width: 16 },
   { label: '班主任电话', key: 'classTeacherPhone', width: 18 },
-  { label: '校区', key: 'campusName', width: 18 },
-  { label: '苑区', key: 'zoneName', width: 16 },
-  { label: '楼栋', key: 'buildingName', width: 16 },
-  { label: '楼层', key: 'floor', width: 10 },
-  { label: '寝室', key: 'roomCode', width: 12 },
-  { label: '床位', key: 'bedCode', width: 12 },
-  { label: '床位状态', key: 'bedStatus', width: 14 },
+  { label: '辅导员', key: 'counselorName', width: 16 },
+  { label: '辅导员电话', key: 'counselorPhone', width: 18 },
 ]
 
 async function exportBedTable() {
@@ -1316,12 +1398,15 @@ async function exportBedTable() {
     }
 
     const headers = EXCEL_COLUMNS.map((column) => column.label)
-    const exportRows = rows.map((row) => EXCEL_COLUMNS.reduce((record, column) => {
-      record[column.label] = row[column.key]
+    const exportRows = rows.map((row, rowIndex) => EXCEL_COLUMNS.reduce((record, column) => {
+      record[column.label] = column.key === 'dormitoryNo' && getDormitoryRowSpan(rows, rowIndex) === 0
+        ? ''
+        : row[column.key]
       return record
     }, {}))
     const worksheet = XLSX.utils.json_to_sheet(exportRows, { header: headers })
     worksheet['!cols'] = EXCEL_COLUMNS.map((column) => ({ wch: column.width }))
+    worksheet['!merges'] = getDormitoryCellMerges(rows)
 
     const workbook = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(workbook, worksheet, '床位统计表')
@@ -1659,23 +1744,21 @@ async function handleBuildingChange(buildingId) {
         scrollbar-always-on
         row-key="id"
         :row-class-name="getBedRowClassName"
+        :span-method="getBedTableSpan"
         empty-text="暂无符合条件的床位数据"
       >
-        <el-table-column prop="studentNo" label="学号" min-width="130" show-overflow-tooltip />
+        <el-table-column prop="dormitoryNo" label="寝室号" min-width="110" show-overflow-tooltip />
+        <el-table-column prop="bedCode" label="床位号" min-width="100" show-overflow-tooltip />
         <el-table-column prop="studentName" label="姓名" min-width="110" show-overflow-tooltip />
-        <el-table-column prop="gender" label="性别" width="90" />
+        <el-table-column prop="gender" label="性别" width="80" />
         <el-table-column prop="collegeName" label="学院" min-width="190" show-overflow-tooltip />
-        <el-table-column prop="counselorName" label="辅导员" min-width="130" show-overflow-tooltip />
-        <el-table-column prop="counselorPhone" label="辅导员电话" min-width="150" show-overflow-tooltip />
-        <el-table-column prop="classTeacherName" label="班主任" min-width="130" show-overflow-tooltip />
-        <el-table-column prop="classTeacherPhone" label="班主任电话" min-width="150" show-overflow-tooltip />
-        <el-table-column fixed="right" prop="campusName" label="校区" min-width="130" show-overflow-tooltip />
-        <el-table-column fixed="right" prop="zoneName" label="苑区" min-width="120" show-overflow-tooltip />
-        <el-table-column fixed="right" prop="buildingName" label="楼栋" min-width="120" show-overflow-tooltip />
-        <el-table-column fixed="right" prop="floor" label="楼层" width="90" />
-        <el-table-column fixed="right" prop="roomCode" label="寝室" min-width="110" show-overflow-tooltip />
-        <el-table-column fixed="right" prop="bedCode" label="床位" min-width="100" show-overflow-tooltip />
-        <el-table-column fixed="right" prop="bedStatus" label="床位状态" min-width="120" show-overflow-tooltip />
+        <el-table-column prop="className" label="班级" min-width="150" show-overflow-tooltip />
+        <el-table-column prop="mobile" label="手机号" min-width="130" show-overflow-tooltip />
+        <el-table-column prop="studentNo" label="学号" min-width="130" show-overflow-tooltip />
+        <el-table-column prop="classTeacherName" label="班主任" min-width="120" show-overflow-tooltip />
+        <el-table-column prop="classTeacherPhone" label="班主任电话" min-width="145" show-overflow-tooltip />
+        <el-table-column prop="counselorName" label="辅导员" min-width="120" show-overflow-tooltip />
+        <el-table-column prop="counselorPhone" label="辅导员电话" min-width="145" show-overflow-tooltip />
         <el-table-column fixed="right" label="修改" width="96">
           <template #default="{ row }">
             <el-button
@@ -2135,6 +2218,16 @@ async function handleBuildingChange(buildingId) {
   --el-table-header-text-color: #bfdbfe;
   --el-table-border-color: rgba(147, 197, 253, 0.16);
   --el-table-row-hover-bg-color: rgba(59, 130, 246, 0.18);
+}
+
+.data-stage--table :deep(.el-table th.el-table__cell),
+.data-stage--table :deep(.el-table td.el-table__cell) {
+  text-align: center;
+  vertical-align: middle;
+}
+
+.data-stage--table :deep(.el-table .cell) {
+  text-align: center;
 }
 
 .data-stage--table :deep(.room-group-gray > td.el-table__cell) {
