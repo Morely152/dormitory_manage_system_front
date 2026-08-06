@@ -13,3 +13,5 @@ vite.*.log
 .idea
 .vscode/*
 !.vscode/extensions.json
+Agents.md
+.env.development
