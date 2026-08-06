@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { Delete, EditPen, Plus, Refresh, Search, UserFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { createUser, deleteUser, getRoles, getUsers, updateUser } from '@/api/accountManagement'
+import { getCollegeOptions } from '@/api/accommodationImport'
 import { getBuildings, getCampuses, getZones } from '@/api/roomManagement'
 import { ROLE_KEYS } from '@/config/access'
 
@@ -16,6 +17,7 @@ const roles = ref([])
 const campuses = ref([])
 const zones = ref([])
 const buildings = ref([])
+const colleges = ref([])
 const optionsLoading = ref(false)
 
 const editor = reactive({
@@ -34,6 +36,7 @@ function createEmptyForm() {
     campusId: '',
     zoneId: '',
     buildingId: '',
+    collegeId: '',
   }
 }
 
@@ -57,6 +60,7 @@ function normalizeOption(item, type) {
     campus: { id: ['id', 'campusId', 'value'], code: ['campusCode', 'code'], name: ['campusName', 'name', 'label'] },
     zone: { id: ['id', 'zoneId', 'value'], code: ['zoneCode', 'code'], name: ['zoneName', 'name', 'label'] },
     building: { id: ['id', 'buildingId', 'value'], code: ['buildingCode', 'code'], name: ['buildingName', 'name', 'label'] },
+    college: { id: ['id', 'collegeId', 'value'], code: ['collegeCode', 'code'], name: ['collegeName', 'name', 'label'] },
   }
   const fields = maps[type]
   const value = (names) => names.map((name) => item?.[name]).find((itemValue) => itemValue !== undefined && itemValue !== null && itemValue !== '')
@@ -98,11 +102,12 @@ const selectedRoleCode = computed(() => selectedRole()?.roleCode || '')
 const isZoneManager = computed(() =>
   [ROLE_KEYS.ZONE_MANAGER, ROLE_KEYS.ZONE_ADMIN].includes(selectedRoleCode.value),
 )
+const isCounselor = computed(() => selectedRoleCode.value === ROLE_KEYS.COUNSELOR)
 const editorTitle = computed(() => (editor.mode === 'create' ? '新增用户账号' : '编辑用户账号'))
 const filteredUsers = computed(() => {
   const query = keyword.value.trim().toLowerCase()
   if (!query) return users.value
-  return users.value.filter((user) => [user.userCode, user.userName, user.mobile, user.roleName, user.campusName, user.zoneName, user.buildingName]
+  return users.value.filter((user) => [user.userCode, user.userName, user.mobile, user.roleName, user.collegeName, user.campusName, user.zoneName, user.buildingName]
     .some((value) => String(value || '').toLowerCase().includes(query)))
 })
 
@@ -118,6 +123,7 @@ const formRules = {
   mobile: [{ max: 32, message: '联系电话不能超过 32 个字符', trigger: 'blur' }],
   roleId: [{ required: true, message: '请选择角色', trigger: 'change' }],
   zoneId: [{ validator: validateZone, trigger: 'change' }],
+  collegeId: [{ validator: validateCollege, trigger: 'change' }],
 }
 
 function validateZone(_rule, value, callback) {
@@ -125,7 +131,13 @@ function validateZone(_rule, value, callback) {
   else callback()
 }
 
+function validateCollege(_rule, value, callback) {
+  if (isCounselor.value && !value) callback(new Error('辅导员必须选择学院'))
+  else callback()
+}
+
 function scopeText(user) {
+  if (user.collegeName) return user.collegeName
   return [user.campusName, user.zoneName, user.buildingName].filter(Boolean).join(' / ') || '全局'
 }
 
@@ -144,14 +156,16 @@ async function loadUsers() {
 async function loadRolesAndCampuses() {
   optionsLoading.value = true
   try {
-    const [roleRows, campusRows] = await Promise.all([
+    const [roleRows, campusRows, collegeRows] = await Promise.all([
       getRoles().then((response) => unwrapList(response, '角色列表响应格式不正确')),
       getCampuses().then((response) => unwrapList(response, '校区列表响应格式不正确')),
+      getCollegeOptions().then((response) => unwrapList(response, '学院列表响应格式不正确')),
     ])
     roles.value = roleRows.filter(
       (role) => role.active !== false && Object.values(ROLE_KEYS).includes(role.roleCode),
     )
     campuses.value = campusRows.map((item) => normalizeOption(item, 'campus')).filter((item) => item.id !== undefined)
+    colleges.value = collegeRows.map((item) => normalizeOption(item, 'college')).filter((item) => item.id !== undefined)
   } catch (error) {
     ElMessage.error(requestError(error, '表单选项加载失败'))
   } finally {
@@ -196,8 +210,17 @@ async function handleZoneChange() {
 }
 
 function handleRoleChange() {
-  if (isZoneManager.value) editor.form.buildingId = ''
-  formRef.value?.validateField(['zoneId', 'buildingId']).catch(() => {})
+  if (isCounselor.value) {
+    editor.form.campusId = ''
+    editor.form.zoneId = ''
+    editor.form.buildingId = ''
+    zones.value = []
+    buildings.value = []
+  } else {
+    editor.form.collegeId = ''
+    if (isZoneManager.value) editor.form.buildingId = ''
+  }
+  formRef.value?.validateField(['collegeId', 'zoneId', 'buildingId']).catch(() => {})
 }
 
 function resetEditor() {
@@ -221,15 +244,17 @@ async function openEdit(user) {
 
   const role = roles.value.find((item) => item.roleCode === user.roleCode)
   const campus = campuses.value.find((item) => item.code === user.campusCode)
+  const college = colleges.value.find((item) => item.code === user.collegeCode)
   Object.assign(editor.form, {
     userCode: user.userCode || '',
     userName: user.userName || '',
     mobile: user.mobile || '',
     roleId: role?.id || '',
     campusId: campus?.id || '',
+    collegeId: college?.id || '',
   })
 
-  if (editor.form.campusId) {
+  if (!isCounselor.value && editor.form.campusId) {
     await loadZones(editor.form.campusId)
     const zone = zones.value.find((item) => item.code === user.zoneCode)
     editor.form.zoneId = zone?.id || ''
@@ -243,14 +268,16 @@ async function openEdit(user) {
 }
 
 function payload(includeActive = false) {
+  const counselor = isCounselor.value
   return {
     userCode: editor.form.userCode.trim(),
     userName: editor.form.userName.trim(),
     mobile: editor.form.mobile.trim() || null,
     roleId: editor.form.roleId,
-    campusId: editor.form.campusId || null,
-    zoneId: editor.form.zoneId || null,
-    buildingId: isZoneManager.value ? null : (editor.form.buildingId || null),
+    campusId: counselor ? null : (editor.form.campusId || null),
+    zoneId: counselor ? null : (editor.form.zoneId || null),
+    buildingId: counselor || isZoneManager.value ? null : (editor.form.buildingId || null),
+    collegeId: counselor ? (editor.form.collegeId || null) : null,
     ...(includeActive ? { active: true } : {}),
   }
 }
@@ -395,6 +422,14 @@ onMounted(async () => {
         </div>
 
         <fieldset class="scope-fieldset">
+          <template v-if="isCounselor">
+            <el-form-item label="所属学院" prop="collegeId">
+              <el-select v-model="editor.form.collegeId" :loading="optionsLoading" clearable placeholder="请选择学院">
+                <el-option v-for="college in colleges" :key="college.id" :label="college.name" :value="college.id" />
+              </el-select>
+            </el-form-item>
+          </template>
+          <template v-else>
           <legend>管理范围</legend>
           <p class="scope-note">苑区老师和苑区管理员须选择苑区。</p>
           <div class="dialog-form-grid">
@@ -414,6 +449,7 @@ onMounted(async () => {
               <el-option v-for="building in buildings" :key="building.id" :label="building.name" :value="building.id" />
             </el-select>
           </el-form-item>
+          </template>
         </fieldset>
       </el-form>
       <template #footer>
