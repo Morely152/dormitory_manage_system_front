@@ -35,7 +35,7 @@ const roomDetailVisible = ref(false)
 const selectedHeatmapRoom = ref(null)
 const changeApplicationVisible = ref(false)
 const selectedStudentNo = ref('')
-const studentNameInput = ref('')
+const studentSearchInput = ref('')
 
 const DASHBOARD_COLORS = Object.freeze({
   backgroundStart: '#0A1628',
@@ -98,6 +98,7 @@ const filters = reactive({
   building: '',
   room: '',
   studentName: '',
+  studentNo: '',
   gender: '',
   status: 'ALL',
 })
@@ -253,7 +254,7 @@ let chartRequestVersion = 0
 let collegeChart
 let locationChart
 let chartResizeObserver
-let studentNameSearchTimer
+let studentSearchTimer
 // 保存自定义滚轮处理器，重新绘图或销毁图表时用于解除监听。
 let leftChartWheelHandler
 const buildingHeatmapChartRefs = new Map()
@@ -275,7 +276,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  clearTimeout(studentNameSearchTimer)
+  clearTimeout(studentSearchTimer)
   chartResizeObserver?.disconnect()
   disposeCharts()
 })
@@ -640,7 +641,7 @@ function normalizeBedRows(rows) {
   })
 }
 
-function buildBedQuery(page, size, includeStudentName = false) {
+function buildBedQuery(page, size, includeStudentSearch = false) {
   const query = {
     campusId: filters.campus || undefined,
     zoneId: filters.zone || undefined,
@@ -650,23 +651,31 @@ function buildBedQuery(page, size, includeStudentName = false) {
     status: filters.status,
   }
 
-  if (includeStudentName) query.studentName = filters.studentName || undefined
+  if (includeStudentSearch) {
+    query.studentName = filters.studentName || undefined
+    query.studentNo = filters.studentNo || undefined
+  }
 
   if (page !== undefined) query.page = page
   if (size !== undefined) query.size = size
   return query
 }
 
-function handleStudentNameInput(value) {
-  clearTimeout(studentNameSearchTimer)
-  studentNameSearchTimer = setTimeout(() => {
-    filters.studentName = String(value ?? '').trim()
+function handleStudentSearchInput(value) {
+  clearTimeout(studentSearchTimer)
+  studentSearchTimer = setTimeout(() => {
+    const searchValue = String(value ?? '').trim()
+    const isStudentNo = /^\d+$/.test(searchValue)
+    filters.studentNo = isStudentNo ? searchValue : ''
+    filters.studentName = searchValue && !isStudentNo ? searchValue : ''
   }, 300)
 }
 
-function clearStudentNameFilter() {
-  clearTimeout(studentNameSearchTimer)
+function clearStudentSearchFilter() {
+  clearTimeout(studentSearchTimer)
+  studentSearchInput.value = ''
   filters.studentName = ''
+  filters.studentNo = ''
 }
 
 function getBedCacheKey(params = {}) {
@@ -892,7 +901,7 @@ function sortLabels(labels) {
 function getRoomColumnCode(roomCode) {
   const value = String(roomCode ?? '').trim()
   const numericPart = value.match(/\d+$/)?.[0]
-  return numericPart ? numericPart.slice(-2).padStart(2, '0') : value
+  return numericPart?.length > 1 ? numericPart.slice(1) : value
 }
 
 function buildRoomHeatmap(rows, buildingId) {
@@ -935,9 +944,9 @@ function buildGraduateRoomOutlineData(heatmapData, columnCount, floorCount) {
 }
 
 function getHeatmapRoomPosition(data) {
-  const roomDigits = String(data[5] ?? '').match(/\d+/)?.[0] || ''
-  const floorNo = roomDigits.length >= 3 ? Number(roomDigits[0]) : Number(data[6])
-  const roomNo = roomDigits.length >= 2 ? roomDigits.slice(-2) : String(data[0]).padStart(2, '0')
+  const roomDigits = String(data[5] ?? '').match(/\d+$/)?.[0] || ''
+  const floorNo = roomDigits.length >= 2 ? Number(roomDigits[0]) : Number(data[6])
+  const roomNo = roomDigits.length >= 2 ? roomDigits.slice(1) : String(data[0]).padStart(2, '0')
   return {
     floorNo,
     roomNo,
@@ -1508,10 +1517,18 @@ async function exportBedTable() {
     const worksheet = XLSX.utils.json_to_sheet(exportRows, { header: headers })
     worksheet['!cols'] = EXCEL_COLUMNS.map((column) => ({ wch: column.width }))
     worksheet['!merges'] = getDormitoryCellMerges(rows)
+    const cellAlignment = { horizontal: 'center', vertical: 'center' }
+    Object.keys(worksheet).forEach((cellAddress) => {
+      if (cellAddress.startsWith('!')) return
+      worksheet[cellAddress].s = {
+        ...(worksheet[cellAddress].s || {}),
+        alignment: cellAlignment,
+      }
+    })
 
     const workbook = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(workbook, worksheet, '床位统计表')
-    XLSX.writeFile(workbook, `赣南师范大学宿舍床位统计表-${new Date().toISOString().slice(0, 10)}.xlsx`)
+    XLSX.writeFile(workbook, `赣南师范大学宿舍床位统计表-${new Date().toISOString().slice(0, 10)}.xlsx`, { cellStyles: true })
     ElMessage.success(`已导出 ${rows.length} 条床位数据`)
   } catch (error) {
     ElMessage.error(await requestErrorMessage(error, '床位数据导出失败'))
@@ -1689,13 +1706,13 @@ async function handleBuildingChange(buildingId) {
       </label>
 
       <label v-if="displayMode === 'table'" class="filter-field">
-        <span>姓名</span>
+        <span>学号或姓名</span>
         <el-input
-          v-model="studentNameInput"
+          v-model="studentSearchInput"
           clearable
-          placeholder="输入学生姓名"
-          @input="handleStudentNameInput"
-          @clear="clearStudentNameFilter"
+          placeholder="输入学号或姓名"
+          @input="handleStudentSearchInput"
+          @clear="clearStudentSearchFilter"
         />
       </label>
 
