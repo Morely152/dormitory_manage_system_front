@@ -809,12 +809,16 @@ function buildRoomStatistics(rows) {
         total: getRoomCapacity(row),
         returnedCount: 0,
         occupied: 0,
+        hasGraduateStudent: false,
       })
     }
 
     const room = rooms.get(roomKey)
     room.returnedCount += 1
     if (isOccupiedBed(row)) room.occupied += 1
+    if (isOccupiedBed(row) && String(row.studentNo ?? '').trim().startsWith('1')) {
+      room.hasGraduateStudent = true
+    }
   })
 
   return [...rooms.values()].map((room) => {
@@ -899,10 +903,89 @@ function buildRoomHeatmap(rows, buildingId) {
   const roomCodes = sortLabels([...new Set(items.map((item) => getRoomColumnCode(item.roomCode)))])
   const data = items.map((room) => {
     const state = room.occupied === 0 ? 0 : (room.occupied >= room.total ? 2 : 1)
-    return [roomCodes.indexOf(getRoomColumnCode(room.roomCode)), floors.indexOf(room.floor), state, room.occupied, room.total, room.roomCode, room.floor, room.key]
+    return [roomCodes.indexOf(getRoomColumnCode(room.roomCode)), floors.indexOf(room.floor), state, room.occupied, room.total, room.roomCode, room.floor, room.key, room.hasGraduateStudent]
   })
 
   return { floors, roomCodes, data }
+}
+
+function buildGraduateRoomOutlineData(heatmapData, columnCount, floorCount) {
+  const graduateCells = heatmapData.filter((data) => data[8])
+  const graduateGridKeys = new Set(
+    graduateCells.map(([columnIndex, floorIndex]) => `${columnIndex}:${floorIndex}`),
+  )
+  const graduateRoomKeys = new Set(
+    graduateCells.map((data) => getHeatmapRoomPosition(data).key),
+  )
+
+  return graduateCells.map((data) => {
+    const [columnIndex, floorIndex] = data
+    const { floorNo, roomNo } = getHeatmapRoomPosition(data)
+    return [
+      columnIndex,
+      floorIndex,
+      !graduateRoomKeys.has(`${floorNo + 1}:${roomNo}`),
+      !graduateGridKeys.has(`${columnIndex + 1}:${floorIndex}`),
+      !graduateRoomKeys.has(`${floorNo - 1}:${roomNo}`),
+      !graduateGridKeys.has(`${columnIndex - 1}:${floorIndex}`),
+      columnCount,
+      floorCount,
+    ]
+  })
+}
+
+function getHeatmapRoomPosition(data) {
+  const roomDigits = String(data[5] ?? '').match(/\d+/)?.[0] || ''
+  const floorNo = roomDigits.length >= 3 ? Number(roomDigits[0]) : Number(data[6])
+  const roomNo = roomDigits.length >= 2 ? roomDigits.slice(-2) : String(data[0]).padStart(2, '0')
+  return {
+    floorNo,
+    roomNo,
+    key: `${floorNo}:${roomNo}`,
+  }
+}
+
+function getHeatmapDataValues(params) {
+  return Array.isArray(params.data) ? params.data : params.data?.value ?? params.value
+}
+
+function getHeatmapCellData(data) {
+  if (!data[8]) return data
+
+  return {
+    value: data,
+    itemStyle: { borderWidth: 0 },
+  }
+}
+
+function renderGraduateRoomOutline(params, api) {
+  const [centerX, centerY] = api.coord([api.value(0), api.value(1)])
+  const cellWidth = Math.abs(params.coordSys.width / api.value(6))
+  const cellHeight = Math.abs(params.coordSys.height / api.value(7))
+  const left = centerX - cellWidth / 2
+  const right = centerX + cellWidth / 2
+  const top = centerY - cellHeight / 2
+  const bottom = centerY + cellHeight / 2
+  const outlineStyle = {
+    stroke: '#22d3ee',
+    lineWidth: 2,
+    lineCap: 'square',
+    lineJoin: 'round',
+    shadowBlur: 8,
+    shadowColor: 'rgba(34, 211, 238, 0.88)',
+  }
+  const sides = [
+    api.value(2) && { x1: left, y1: top, x2: right, y2: top },
+    api.value(3) && { x1: right, y1: top, x2: right, y2: bottom },
+    api.value(4) && { x1: right, y1: bottom, x2: left, y2: bottom },
+    api.value(5) && { x1: left, y1: bottom, x2: left, y2: top },
+  ].filter(Boolean)
+
+  return {
+    type: 'group',
+    silent: true,
+    children: sides.map((shape) => ({ type: 'line', shape, style: outlineStyle })),
+  }
 }
 
 function buildZoneHeatmapGroups(rows, preferredZoneNames) {
@@ -1225,7 +1308,7 @@ function renderBuildingHeatmaps() {
       chart?.off('click')
       chart?.on('click', (params) => {
         if (params.seriesType !== 'heatmap' || !params.data) return
-        const [, , , , , roomCode, floor, key] = params.data
+        const [, , , , , roomCode, floor, key] = getHeatmapDataValues(params)
         selectedHeatmapRoom.value = { key, roomCode, floor }
         roomDetailVisible.value = true
       })
@@ -1242,7 +1325,7 @@ function renderBuildingHeatmaps() {
           borderWidth: 1,
           textStyle: { color: DASHBOARD_COLORS.text, fontFamily: DASHBOARD_FONT, fontSize: 11, lineHeight: 16 },
           formatter: (params) => {
-            const [, , , occupied, total, roomCode, floor] = params.data
+            const [, , , occupied, total, roomCode, floor] = getHeatmapDataValues(params)
             if (compactMode) return `${roomCode}房间：${occupied}/${total}`
             return `楼层：${floor}<br/>寝室：${roomCode}<br/>入住人数 / 床位数：${occupied} / ${total}`
           },
@@ -1278,6 +1361,7 @@ function renderBuildingHeatmaps() {
         visualMap: {
           show: false,
           type: 'piecewise',
+          seriesIndex: 0,
           dimension: 2,
           pieces: [
             { value: 2, color: DASHBOARD_COLORS.red },
@@ -1289,10 +1373,32 @@ function renderBuildingHeatmaps() {
           name: '寝室状态',
           type: 'heatmap',
           cursor: 'pointer',
-          data: building.heatmap.data,
-          label: { show: !compactMode, color: '#091526', fontFamily: DASHBOARD_NUMBER_FONT, fontSize: heatmapLabelFontSize, formatter: (params) => `${params.data[5]}\n${params.data[3]}/${params.data[4]}` },
+          data: building.heatmap.data.map(getHeatmapCellData),
+          label: {
+            show: !compactMode,
+            color: '#091526',
+            fontFamily: DASHBOARD_NUMBER_FONT,
+            fontSize: heatmapLabelFontSize,
+            formatter: (params) => {
+              const [, , , occupied, total, roomCode] = getHeatmapDataValues(params)
+              return `${roomCode}\n${occupied}/${total}`
+            },
+          },
           itemStyle: { borderColor: 'rgba(10, 22, 40, 0.85)', borderWidth: 1 },
           emphasis: { itemStyle: { borderColor: '#FFFFFF', borderWidth: 2 } },
+        }, {
+          name: '研究生寝室轮廓',
+          type: 'custom',
+          coordinateSystem: 'cartesian2d',
+          silent: true,
+          z: 4,
+          encode: { x: 0, y: 1 },
+          data: buildGraduateRoomOutlineData(
+            building.heatmap.data,
+            building.heatmap.roomCodes.length,
+            building.heatmap.floors.length,
+          ),
+          renderItem: renderGraduateRoomOutline,
         }],
       }, true)
       requestAnimationFrame(() => chart?.resize())
@@ -1904,6 +2010,7 @@ async function handleBuildingChange(buildingId) {
                 <span><i class="heatmap-legend__marker heatmap-legend__marker--empty"></i>空房间</span>
                 <span><i class="heatmap-legend__marker heatmap-legend__marker--partial"></i>可插空</span>
                 <span><i class="heatmap-legend__marker heatmap-legend__marker--full"></i>已住满</span>
+                <span><i class="heatmap-legend__marker heatmap-legend__marker--graduate"></i>研究生寝室</span>
               </div>
             </div>
             <div
@@ -2507,6 +2614,12 @@ async function handleBuildingChange(buildingId) {
 
 .heatmap-legend__marker--empty {
   background: #36d399;
+}
+
+.heatmap-legend__marker--graduate {
+  border: 1px solid #22d3ee;
+  background: rgba(34, 211, 238, 0.28);
+  box-shadow: 0 0 6px rgba(34, 211, 238, 0.8);
 }
 
 .zone-heatmap-grid {
