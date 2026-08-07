@@ -251,6 +251,17 @@ export const ACCESS_MODULES = Object.freeze([
     roles: [ROLE_KEYS.SYSTEM_ADMIN, ROLE_KEYS.DORMITORY_ADMIN],
   },
   {
+    id: 'bed-allocation-new',
+    subsystem: SUBSYSTEM_KEYS.BED,
+    routeName: 'BedAllocationNew',
+    path: '/accommodation/bed-allocation-new',
+    title: '寝室床位智能分配（新）',
+    description: '寝室床位智能分配新页面',
+    group: '住宿信息',
+    icon: 'Grid',
+    roles: [ROLE_KEYS.SYSTEM_ADMIN, ROLE_KEYS.DORMITORY_ADMIN],
+  },
+  {
     id: 'repair-application',
     subsystem: SUBSYSTEM_KEYS.MAINTENANCE,
     routeName: 'RepairApplication',
