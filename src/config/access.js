@@ -255,7 +255,7 @@ export const ACCESS_MODULES = Object.freeze([
     subsystem: SUBSYSTEM_KEYS.BED,
     routeName: 'BedAllocationNew',
     path: '/accommodation/bed-allocation-new',
-    title: '寝室床位智能分配（新）',
+    title: '寝室床位智能分配系统',
     description: '寝室床位智能分配新页面',
     group: '住宿信息',
     icon: 'Grid',
