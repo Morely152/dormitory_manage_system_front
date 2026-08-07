@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { ArrowLeft, DataAnalysis, Download, EditPen, List } from '@element-plus/icons-vue'
+import { ArrowLeft, DataAnalysis, DocumentAdd, Download, EditPen, List } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import html2canvas from 'html2canvas'
 import * as XLSX from 'xlsx'
@@ -8,8 +8,13 @@ import { ElMessage } from 'element-plus'
 import { getCollegeOptions } from '@/api/accommodationImport'
 import { getBeds } from '@/api/beds'
 import { getBuildings, getCampuses, getRooms, getZones } from '@/api/roomManagement'
+import { getModule } from '@/config/access'
+import { useAuthStore } from '@/stores/auth'
 import AccommodationChangeApplicationView from '@/views/AccommodationChangeApplicationView.vue'
+import AccommodationImportView from '@/views/AccommodationImportView.vue'
 
+const auth = useAuthStore()
+const accommodationImportModule = getModule('accommodation-import')
 const displayMode = ref('chart')
 // 空床位楼栋图的排序模式：默认按空床位数量从高到低排列。
 const emptyBedSortMode = ref('count')
@@ -35,7 +40,13 @@ const roomDetailVisible = ref(false)
 const selectedHeatmapRoom = ref(null)
 const changeApplicationVisible = ref(false)
 const selectedStudentNo = ref('')
+const accommodationImportVisible = ref(false)
+const selectedEmptyBed = ref(null)
 const studentSearchInput = ref('')
+
+const canCreateAccommodation = computed(() => (
+  Boolean(accommodationImportModule?.roles.includes(auth.currentRole.value))
+))
 
 const DASHBOARD_COLORS = Object.freeze({
   backgroundStart: '#0A1628',
@@ -509,6 +520,39 @@ function openStudentChangeDialog(row) {
   if (!canModifyStudent(row)) return
   selectedStudentNo.value = row.studentNo
   changeApplicationVisible.value = true
+}
+
+function canAddAccommodation(row) {
+  return isAvailableBedStatus(row?.bedStatusCode, row?.bedStatus)
+    && [row?.campusId, row?.zoneId, row?.buildingId, row?.roomId, row?.bedCode]
+      .every((value) => value !== undefined && value !== null && value !== '')
+}
+
+function openAccommodationImportDialog(row) {
+  if (!canCreateAccommodation.value || !canAddAccommodation(row)) return
+
+  selectedEmptyBed.value = {
+    campusId: row.campusId,
+    campusName: row.campusName,
+    zoneId: row.zoneId,
+    zoneName: row.zoneName,
+    buildingId: row.buildingId,
+    buildingName: row.buildingName,
+    roomId: row.roomId,
+    roomCode: row.roomCode,
+    bedCode: row.bedCode,
+  }
+  accommodationImportVisible.value = true
+}
+
+function handleAccommodationImportSubmitted() {
+  accommodationImportVisible.value = false
+  bedRequestCache.clear()
+  loadBedRows()
+}
+
+function handleAccommodationImportClosed() {
+  selectedEmptyBed.value = null
 }
 
 function handleStudentInformationUpdated() {
@@ -1877,9 +1921,21 @@ async function handleBuildingChange(buildingId) {
         <el-table-column prop="classTeacherPhone" label="班主任电话" min-width="145" show-overflow-tooltip />
         <el-table-column prop="counselorName" label="辅导员" min-width="120" show-overflow-tooltip />
         <el-table-column prop="counselorPhone" label="辅导员电话" min-width="145" show-overflow-tooltip />
-        <el-table-column fixed="right" label="修改" width="96">
+        <el-table-column fixed="right" label="操作" width="96">
           <template #default="{ row }">
             <el-button
+              v-if="isAvailableBedStatus(row.bedStatusCode, row.bedStatus)"
+              link
+              type="primary"
+              :icon="DocumentAdd"
+              :disabled="!canCreateAccommodation || !canAddAccommodation(row)"
+              :aria-label="`向${row.dormitoryNo} ${row.bedCode}号床添加住宿信息`"
+              @click="openAccommodationImportDialog(row)"
+            >
+              添加
+            </el-button>
+            <el-button
+              v-else
               link
               type="primary"
               :icon="EditPen"
@@ -2111,6 +2167,25 @@ async function handleBuildingChange(buildingId) {
         embedded
         :initial-student-no="selectedStudentNo"
         @updated="handleStudentInformationUpdated"
+      />
+    </el-dialog>
+
+    <el-dialog
+      v-model="accommodationImportVisible"
+      class="student-change-dialog"
+      width="min(1120px, 94vw)"
+      append-to-body
+      destroy-on-close
+      @closed="handleAccommodationImportClosed"
+    >
+      <template #header>
+        <div class="student-change-dialog__title">添加住宿信息</div>
+      </template>
+      <AccommodationImportView
+        v-if="accommodationImportVisible"
+        embedded
+        :initial-bed="selectedEmptyBed"
+        @submitted="handleAccommodationImportSubmitted"
       />
     </el-dialog>
   </div>

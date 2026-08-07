@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
   CircleCheckFilled,
   Document,
@@ -18,6 +18,19 @@ import {
   getStudentAccommodationImportTask,
 } from '@/api/accommodationImport'
 import { getBuildings, getCampuses, getRooms, getZones } from '@/api/roomManagement'
+
+const props = defineProps({
+  embedded: {
+    type: Boolean,
+    default: false,
+  },
+  initialBed: {
+    type: Object,
+    default: null,
+  },
+})
+
+const emit = defineEmits(['submitted'])
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024
 const MOBILE_MEDIA_QUERY = '(max-width: 600px)'
@@ -44,7 +57,7 @@ const IMPORT_ISSUE_COLUMNS = [
 ].map(([prop, label]) => ({ prop, label }))
 
 const isMobile = ref(window.matchMedia(MOBILE_MEDIA_QUERY).matches)
-const activeTab = ref(isMobile.value ? 'single' : 'batch')
+const activeTab = ref(props.embedded || isMobile.value ? 'single' : 'batch')
 const uploadRef = ref()
 const batchFile = ref(null)
 const fileList = ref([])
@@ -88,28 +101,35 @@ const singleLoading = ref(false)
 const collegeLoading = ref(false)
 const collegeOptions = ref([])
 const resourceLabels = new Map()
+const resourceOptions = ref([])
+const resourcePathLoading = ref(false)
+const resourceCascaderReady = ref(!props.embedded || !props.initialBed)
 
 const RESOURCE_LEVELS = [
   {
     kind: 'campuses',
+    initialIdField: 'campusId',
     idFields: ['id', 'campusId', 'value'],
     nameFields: ['campusName', 'name', 'label'],
     load: () => getCampuses(),
   },
   {
     kind: 'zones',
+    initialIdField: 'zoneId',
     idFields: ['id', 'zoneId', 'value'],
     nameFields: ['zoneName', 'name', 'label'],
     load: (campusId) => getZones(campusId),
   },
   {
     kind: 'buildings',
+    initialIdField: 'buildingId',
     idFields: ['id', 'buildingId', 'value'],
     nameFields: ['buildingName', 'name', 'label'],
     load: (zoneId) => getBuildings(zoneId),
   },
   {
     kind: 'rooms',
+    initialIdField: 'roomId',
     idFields: ['id', 'roomId', 'value'],
     nameFields: ['roomCode', 'roomNo', 'roomNumber', 'roomName', 'name', 'label'],
     load: (buildingId) => getRooms(buildingId),
@@ -128,7 +148,7 @@ onMounted(() => {
   handleViewportChange(mobileMediaQuery)
   mobileMediaQuery.addEventListener('change', handleViewportChange)
   loadCollegeOptions()
-  void restoreCurrentImportTask()
+  if (!props.embedded) void restoreCurrentImportTask()
 })
 
 onBeforeUnmount(() => {
@@ -179,6 +199,29 @@ function compareResourceRows(rowA, rowB, idFields) {
   return String(valueA ?? '').localeCompare(String(valueB ?? ''), 'zh-CN', { numeric: true })
 }
 
+async function fetchResourceOptions(levelIndex, parentValue) {
+  const level = RESOURCE_LEVELS[levelIndex]
+  const response = await level.load(parentValue)
+  const rows = unwrapResponse(response, `${level.kind} 加载失败`)
+  if (!Array.isArray(rows)) throw new Error('住宿资源列表响应格式不正确')
+
+  return [...rows]
+    .sort((rowA, rowB) => compareResourceRows(rowA, rowB, level.idFields))
+    .map((row) => {
+      const value = firstDefined(row, level.idFields)
+      const label = String(firstDefined(row, level.nameFields) ?? '').trim()
+      if (value === undefined || !label) return null
+
+      resourceLabels.set(`${level.kind}:${value}`, label)
+      return {
+        value,
+        label,
+        leaf: levelIndex === RESOURCE_LEVELS.length - 1,
+      }
+    })
+    .filter(Boolean)
+}
+
 async function loadCollegeOptions() {
   collegeLoading.value = true
   try {
@@ -204,34 +247,13 @@ async function loadCollegeOptions() {
 }
 
 async function loadResourceOptions(node, resolve, reject) {
-  const level = RESOURCE_LEVELS[node.level]
-  if (!level) {
+  if (!RESOURCE_LEVELS[node.level]) {
     resolve([])
     return
   }
 
   try {
-    const response = await level.load(node.value)
-    const rows = unwrapResponse(response, `${level.kind} 加载失败`)
-    if (!Array.isArray(rows)) throw new Error('住宿资源列表响应格式不正确')
-
-    const options = [...rows]
-      .sort((rowA, rowB) => compareResourceRows(rowA, rowB, level.idFields))
-      .map((row) => {
-        const value = firstDefined(row, level.idFields)
-        const label = String(firstDefined(row, level.nameFields) ?? '').trim()
-        if (value === undefined || !label) return null
-
-        resourceLabels.set(`${level.kind}:${value}`, label)
-        return {
-          value,
-          label,
-          leaf: node.level === RESOURCE_LEVELS.length - 1,
-        }
-      })
-      .filter(Boolean)
-
-    resolve(options)
+    resolve(await fetchResourceOptions(node.level, node.value))
   } catch (error) {
     reject()
     ElMessage.error(await requestErrorMessage(error, '住宿资源加载失败'))
@@ -243,6 +265,69 @@ const resourceCascaderProps = {
   lazyLoad: loadResourceOptions,
   emitPath: true,
 }
+
+function hasInitialBedValue(value) {
+  return value !== undefined && value !== null && value !== ''
+}
+
+function isSameResourceValue(valueA, valueB) {
+  return String(valueA) === String(valueB)
+}
+
+async function initializeInitialBed() {
+  if (!props.embedded || !props.initialBed) {
+    resourceCascaderReady.value = true
+    return
+  }
+
+  const initialPath = RESOURCE_LEVELS.map((level) => props.initialBed[level.initialIdField])
+  const numericBedCode = Number(props.initialBed.bedCode)
+  if (!initialPath.every(hasInitialBedValue) || !Number.isInteger(numericBedCode) || numericBedCode < 1) {
+    resourceCascaderReady.value = true
+    ElMessage.error('目标空床位信息不完整，无法预填住宿位置')
+    return
+  }
+
+  resourcePathLoading.value = true
+  resourceCascaderReady.value = false
+  resetSingleForm()
+  try {
+    let options = await fetchResourceOptions(0)
+    resourceOptions.value = options
+
+    for (let index = 0; index < RESOURCE_LEVELS.length; index += 1) {
+      const level = RESOURCE_LEVELS[index]
+      const value = initialPath[index]
+      const selectedOption = options.find((option) => isSameResourceValue(option.value, value))
+      if (!selectedOption) throw new Error(`目标${level.kind}已不存在或不可用`)
+
+      if (index < RESOURCE_LEVELS.length - 1) {
+        const childOptions = await fetchResourceOptions(index + 1, selectedOption.value)
+        selectedOption.children = childOptions
+        options = childOptions
+      }
+    }
+
+    singleForm.resourcePath = initialPath
+    handleResourcePathChange(initialPath)
+    singleForm.bedCode = numericBedCode
+  } catch (error) {
+    resourceOptions.value = []
+    Object.assign(singleForm, createEmptySingleForm())
+    ElMessage.error(await requestErrorMessage(error, '目标住宿位置加载失败'))
+  } finally {
+    resourcePathLoading.value = false
+    resourceCascaderReady.value = true
+  }
+}
+
+watch(
+  () => props.initialBed,
+  () => {
+    void initializeInitialBed()
+  },
+  { deep: true, immediate: true },
+)
 
 function handleResourcePathChange(path) {
   const formFields = ['campusName', 'zoneName', 'buildingName', 'roomCode']
@@ -549,6 +634,10 @@ async function submitSingleRecord() {
     })
     const result = unwrapResponse(commitResponse, '单条住宿信息添加失败')
     ElMessage.success(result.message || '单条住宿信息添加成功')
+    if (props.embedded) {
+      emit('submitted', result)
+      return
+    }
     resetSingleForm()
   } catch (error) {
     ElMessage.error(await requestErrorMessage(error, '单条住宿信息添加失败'))
@@ -565,7 +654,7 @@ function resetSingleForm() {
 
 <template>
   <div class="feature-page accommodation-import-page">
-    <header class="feature-header">
+    <header v-if="!embedded" class="feature-header">
       <div class="feature-header__icon" aria-hidden="true">
         <el-icon><UploadFilled /></el-icon>
       </div>
@@ -576,7 +665,7 @@ function resetSingleForm() {
       </div>
     </header>
 
-    <div v-if="!isMobile" class="import-method-switch" role="group" aria-label="选择导入方式">
+    <div v-if="!embedded && !isMobile" class="import-method-switch" role="group" aria-label="选择导入方式">
       <el-button
         type="primary"
         size="large"
@@ -599,7 +688,7 @@ function resetSingleForm() {
       </el-button>
     </div>
 
-    <div v-if="activeTab === 'batch' && !isMobile" class="import-panel">
+    <div v-if="!embedded && activeTab === 'batch' && !isMobile" class="import-panel">
       <section class="import-section" aria-labelledby="batch-import-title">
           <div class="section-title-row">
             <div>
@@ -730,6 +819,7 @@ function resetSingleForm() {
 
           <el-form
             ref="singleFormRef"
+            v-loading="resourcePathLoading"
             :model="singleForm"
             :rules="singleRules"
             label-position="top"
@@ -822,10 +912,13 @@ function resetSingleForm() {
                   class="resource-path-item"
                 >
                   <el-cascader
+                    v-if="resourceCascaderReady"
                     v-model="singleForm.resourcePath"
+                    :options="resourceOptions"
                     :props="resourceCascaderProps"
                     :show-all-levels="!isMobile"
                     clearable
+                    :disabled="resourcePathLoading"
                     placement="bottom-start"
                     popper-class="resource-cascader-popper"
                     separator=" / "
