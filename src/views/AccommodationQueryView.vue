@@ -1661,6 +1661,11 @@ async function handleCampusChange(campusId) {
     if (requestVersion !== zoneRequestVersion) return
     if (!Array.isArray(rows)) throw new Error('苑区列表响应格式不正确')
     zoneOptions.value = toOptions(rows, ['id', 'zoneId', 'value'], ['zoneName', 'name', 'label'])
+    if (zoneOptions.value.length === 1) {
+      const [defaultZone] = zoneOptions.value
+      filters.zone = defaultZone.value
+      await handleZoneChange(defaultZone.value)
+    }
   } catch (error) {
     if (requestVersion === zoneRequestVersion) {
       ElMessage.error(await requestErrorMessage(error, '苑区列表加载失败'))
