@@ -9,18 +9,24 @@ const props = defineProps({
   campusName: { type: String, default: '' },
   sourceBeds: { type: Array, default: null },
   allocationSnapshot: { type: Object, default: null },
+  lockedAllocationSnapshot: { type: Object, default: null },
+  graduateLockMode: { type: String, default: '' },
   selectedCollegeId: { type: [String, Number], default: 'ALL' },
 })
 
 const loading = ref(false)
 const errorMessage = ref('')
 const rows = ref([])
+const roomDetailVisible = ref(false)
+const selectedRoom = ref(null)
+const hoverTooltip = ref({ visible: false, title: '', detail: '', allocation: '', left: 0, top: 0 })
 const zoneHeatmapGroups = computed(() => buildZoneHeatmapGroups(rows.value))
 const chartStageRef = ref(null)
 const chartRefs = new Map()
 const charts = new Map()
 let resizeObserver
 let requestVersion = 0
+let hoverTooltipTimer
 
 const COLORS = Object.freeze({
   text: '#E8F1FF',
@@ -31,6 +37,8 @@ const COLORS = Object.freeze({
   full: '#192A45',
   plannedEmpty: '#6442B4',
   plannedPartial: '#0091FF',
+  lockedRoom: '#F97316',
+  lockedBed: '#22D3EE',
 })
 const FONT = '"Source Han Sans SC", "Microsoft YaHei", sans-serif'
 const NUMBER_FONT = '"DIN Alternate", "Roboto Mono", Consolas, monospace'
@@ -65,6 +73,13 @@ function normalizeBedRows(sourceRows) {
     id: firstDefined(source, ['id', 'bedId', 'value']) ?? `bed-${index}`,
     bedId: firstDefined(source, ['bedId', 'id']),
     studentNo: displayValue(source, ['studentNo', 'studentNumber', 'studentId', 'sno', '学号']),
+    studentName: displayValue(source, ['studentName', 'name', 'studentRealName', '姓名']),
+    gender: displayValue(source, ['studentGenderName', 'genderName', 'gender', 'sex', '性别']),
+    collegeName: displayValue(source, ['studentCollegeName', 'collegeName', 'college', 'collegeLabel', '学院', '学院名称']),
+    counselorName: displayValue(source, ['studentCounselorName']),
+    counselorPhone: displayValue(source, ['studentCounselorPhone']),
+    classTeacherName: displayValue(source, ['studentClassTeacher']),
+    classTeacherPhone: displayValue(source, ['studentClassTeacherPhone']),
     campusName: displayValue(source, ['campusName', 'campus', 'campusLabel', '校区', '校区名称']),
     zoneName: displayValue(source, ['zoneName', 'zone', 'zoneLabel', '苑区', '苑区名称']),
     buildingName: displayValue(source, ['buildingName', 'building', 'buildingLabel', '楼栋', '楼栋名称']),
@@ -189,31 +204,129 @@ function buildRoomHeatmap(roomRows, buildingId) {
   return { floors, roomCodes, data }
 }
 
-function getSelectedRoomPlan(roomKey) {
-  const plan = props.allocationSnapshot?.rooms?.find((room) => room.roomKey === roomKey)
-  if (!plan) return null
-  const allocations = props.selectedCollegeId === 'ALL'
-    ? plan.allocations
-    : plan.allocations.filter((item) => String(item.collegeId) === String(props.selectedCollegeId))
+function summarizePlan(plan, allocations) {
   const plannedBeds = allocations.reduce((total, item) => total + Number(item.plannedBeds || 0), 0)
   if (!plannedBeds) return null
   return {
     ...plan,
+    allocations,
     plannedBeds,
     allocationLabel: allocations.map((item) => `${item.collegeName} ${item.level === 'graduate' ? '研究生' : '本科生'}${item.gender === 'male' ? '男生' : '女生'}`).join('、'),
+  }
+}
+
+function getRoomKey(row) {
+  return getLocationKey(row.roomId, `${getBuildingKey(row)}|${row.roomCode}`)
+}
+
+function isAllocatableBedRow(row) {
+  return String(row.statusCode || row.bedStatusCode || '').trim().toUpperCase() === 'AVAILABLE'
+    && row.assignable === true
+    && row.active === true
+    && row.roomAssignable === true
+    && row.roomActive === true
+    && (row.currentStudentId === null || row.currentStudentId === undefined || row.currentStudentId === '')
+}
+
+function planEntriesForRoom(roomKey) {
+  const plan = getSelectedRoomPlan(roomKey)
+  const toEntries = (summary, source) => (summary?.allocations || []).flatMap((allocation) => (
+    Array.from({ length: Math.max(0, Number(allocation.plannedBeds) || 0) }, () => ({
+      ...allocation,
+      source,
+      originalState: summary.originalState,
+    }))
+  ))
+  return [...toEntries(plan.locked, 'locked'), ...toEntries(plan.candidate, 'candidate')]
+}
+
+function plannedBedRow(baseRow, allocation, index) {
+  const isVacancyAssignment = allocation.originalState === 'PARTIAL'
+  const levelLabel = allocation.level === 'graduate' ? '研究生' : '本科生'
+  return {
+    ...baseRow,
+    id: `${baseRow?.id || selectedRoom.value?.key || 'planned'}-plan-${index}`,
+    studentNo: isVacancyAssignment ? '插空预分配' : '预分配',
+    studentName: `${levelLabel}${allocation.gender === 'male' ? '男生' : '女生'}`,
+    gender: allocation.gender === 'male' ? '男' : '女',
+    collegeName: allocation.collegeName || '未指定学院',
+    counselorName: '-',
+    counselorPhone: '-',
+    classTeacherName: '-',
+    classTeacherPhone: '-',
+    bedStatus: isVacancyAssignment ? '插空预分配' : '方案预分配',
+    planAllocation: allocation,
+    isVacancyAssignment,
+  }
+}
+
+const selectedRoomBedRows = computed(() => {
+  const roomKey = selectedRoom.value?.key
+  if (!roomKey) return []
+  const roomRows = rows.value.filter((row) => getRoomKey(row) === roomKey).map((row) => ({ ...row }))
+  const planEntries = planEntriesForRoom(roomKey)
+  planEntries.forEach((allocation, index) => {
+    const availableIndex = roomRows.findIndex((row) => !row.planAllocation && isAllocatableBedRow(row))
+    if (availableIndex >= 0) {
+      roomRows.splice(availableIndex, 1, plannedBedRow(roomRows[availableIndex], allocation, index))
+      return
+    }
+    roomRows.push(plannedBedRow({
+      id: `virtual-${index}`,
+      studentNo: '-',
+      studentName: '-',
+      gender: '-',
+      collegeName: '-',
+      counselorName: '-',
+      counselorPhone: '-',
+      classTeacherName: '-',
+      classTeacherPhone: '-',
+    }, allocation, index))
+  })
+  return roomRows
+})
+
+const selectedRoomPlanCount = computed(() => selectedRoomBedRows.value.filter((row) => row.planAllocation).length)
+const selectedRoomVacancyPlanCount = computed(() => selectedRoomBedRows.value.filter((row) => row.isVacancyAssignment).length)
+
+function getRoomDetailRowClassName({ row }) {
+  if (row.isVacancyAssignment) return 'planned-vacancy-bed-row'
+  if (row.planAllocation) return 'planned-bed-row'
+  if (isAllocatableBedRow(row)) return 'available-bed-row'
+  return ''
+}
+
+function getSelectedRoomPlan(roomKey) {
+  const candidatePlan = props.allocationSnapshot?.rooms?.find((room) => room.roomKey === roomKey)
+  const lockedPlan = props.lockedAllocationSnapshot?.rooms?.find((room) => room.roomKey === roomKey)
+  const candidateAllocations = candidatePlan
+    ? props.selectedCollegeId === 'ALL'
+      ? candidatePlan.allocations
+      : candidatePlan.allocations.filter((item) => String(item.collegeId) === String(props.selectedCollegeId))
+    : []
+  return {
+    candidate: candidatePlan ? summarizePlan(candidatePlan, candidateAllocations) : null,
+    locked: lockedPlan ? summarizePlan(lockedPlan, lockedPlan.allocations || []) : null,
   }
 }
 
 function buildPlanOverlayData(heatmap) {
   return heatmap.data.reduce((result, item) => {
     const plan = getSelectedRoomPlan(item[7])
-    if (!plan) return result
-    result.push([
-      item[0], item[1], plan.originalState === 'EMPTY' ? 0 : 1, plan.plannedBeds,
-      item[3], item[4], item[5], plan.allocationLabel,
+    if (plan.locked) {
+      result.locked.push([
+        item[0], item[1], plan.locked.originalState === 'EMPTY' ? 0 : 1, plan.locked.plannedBeds,
+        item[3], item[4], item[5], plan.locked.allocationLabel,
+        props.graduateLockMode, plan.candidate?.plannedBeds || 0, item[7],
+      ])
+      return result
+    }
+    if (plan.candidate) result.candidate.push([
+      item[0], item[1], plan.candidate.originalState === 'EMPTY' ? 0 : 1, plan.candidate.plannedBeds,
+      item[3], item[4], item[5], plan.candidate.allocationLabel, item[7],
     ])
     return result
-  }, [])
+  }, { candidate: [], locked: [] })
 }
 
 function buildZoneHeatmapGroups(sourceRows) {
@@ -257,6 +370,58 @@ function getOrCreateChart(chart, element) {
   return echarts.getInstanceByDom(element) || echarts.init(element)
 }
 
+function getHeatmapDataValues(params) {
+  const value = params?.value ?? params?.data?.value ?? params?.data
+  return Array.isArray(value) ? value : []
+}
+
+function openRoomDetail(params) {
+  if (params?.seriesType !== 'heatmap') return
+  clearHeatmapTooltip()
+  const data = getHeatmapDataValues(params)
+  const roomKey = params.seriesName === '寝室状态'
+    ? data[7]
+    : params.seriesName === '研究生锁定'
+      ? data[10]
+      : data[8]
+  if (!roomKey) return
+  selectedRoom.value = { key: roomKey, roomCode: data[5], floor: data[6] }
+  roomDetailVisible.value = true
+}
+
+function clearHeatmapTooltip() {
+  clearTimeout(hoverTooltipTimer)
+  hoverTooltip.value.visible = false
+}
+
+function describeHeatmapTooltip(params) {
+  const data = getHeatmapDataValues(params)
+  if (params.seriesName === '研究生锁定') {
+    const lockLabel = data[8] === 'room' ? '整间锁定，本科生不可入住' : '床位锁定，本科生可使用未满床位'
+    const undergraduateLabel = data[9] ? `；当前本科方案 ${data[9]} 人` : ''
+    return { title: `${data[6]}房间`, detail: `研究生安排 ${data[3]} 人`, allocation: `${lockLabel}${undergraduateLabel}` }
+  }
+  if (params.seriesName === '排寝方案') {
+    const roomType = data[2] === 0 ? '原全空寝室' : '原可插空寝室'
+    return { title: `${data[6]}房间`, detail: `${roomType}，本方案安排 ${data[3]} 人`, allocation: data[7] }
+  }
+  return { title: `${data[5]}房间`, detail: `入住人数 / 床位数：${data[3]} / ${data[4]}`, allocation: '' }
+}
+
+function scheduleHeatmapTooltip(params) {
+  if (params?.seriesType !== 'heatmap') return
+  clearHeatmapTooltip()
+  const sourceEvent = params.event?.event || params.event || {}
+  const pointerX = Number(sourceEvent.clientX ?? sourceEvent.pageX ?? 0)
+  const pointerY = Number(sourceEvent.clientY ?? sourceEvent.pageY ?? 0)
+  const left = Math.min(Math.max(8, pointerX + 18), Math.max(8, window.innerWidth - 244))
+  const top = Math.min(Math.max(8, pointerY + 18), Math.max(8, window.innerHeight - 96))
+  const detail = describeHeatmapTooltip(params)
+  hoverTooltipTimer = setTimeout(() => {
+    hoverTooltip.value = { visible: true, ...detail, left, top }
+  }, 500)
+}
+
 function renderCharts() {
   const activeIds = new Set()
   zoneHeatmapGroups.value.forEach((zone) => zone.subZones.forEach((subZone) => subZone.buildings.forEach((building) => {
@@ -267,25 +432,18 @@ function renderCharts() {
     const planOverlayData = buildPlanOverlayData(heatmap)
     const chart = getOrCreateChart(charts.get(building.id), element)
     charts.set(building.id, chart)
+    chart.off('click')
+    chart.on('click', openRoomDetail)
+    chart.off('mouseover')
+    chart.on('mouseover', scheduleHeatmapTooltip)
+    chart.off('mouseout')
+    chart.on('mouseout', clearHeatmapTooltip)
+    chart.off('globalout')
+    chart.on('globalout', clearHeatmapTooltip)
     chart.setOption({
       animationDuration: 300,
       aria: { enabled: true, description: `${subZone.name}${building.name}寝室状态热力图` },
-      tooltip: {
-        show: true,
-        position: 'top',
-        confine: true,
-        backgroundColor: 'rgba(5, 18, 38, 0.94)',
-        borderColor: 'rgba(147, 197, 253, 0.34)',
-        textStyle: { color: COLORS.text, fontFamily: FONT, fontSize: 11, lineHeight: 16 },
-        formatter: (params) => {
-          const data = Array.isArray(params.data) ? params.data : params.value
-          if (params.seriesName === '排寝方案') {
-            const roomType = data[2] === 0 ? '原全空寝室' : '原可插空寝室'
-            return `${data[6]}房间<br/>${roomType}，本方案安排：${data[3]} 人<br/>${data[7]}`
-          }
-          return `${data[5]}房间<br/>入住人数 / 床位数：${data[3]} / ${data[4]}`
-        },
-      },
+      tooltip: { show: false },
       graphic: heatmap.data.length ? [] : [{ type: 'text', left: 'center', top: 'middle', silent: true, style: { text: '暂无寝室数据', fill: COLORS.muted, font: `13px ${FONT}` } }],
       grid: { top: 6, right: 6, bottom: 22, left: 34 },
       xAxis: { type: 'category', data: heatmap.roomCodes, splitArea: { show: true, areaStyle: { color: ['rgba(255,255,255,0.015)', 'rgba(255,255,255,0.03)'] } }, axisLine: { lineStyle: { color: COLORS.grid } }, axisTick: { show: false }, axisLabel: { color: COLORS.muted, fontFamily: NUMBER_FONT, fontSize: 9 } },
@@ -293,6 +451,7 @@ function renderCharts() {
       visualMap: [
         { show: false, type: 'piecewise', seriesIndex: 0, dimension: 2, pieces: [{ value: 2, color: COLORS.full }, { value: 1, color: COLORS.partial }, { value: 0, color: COLORS.empty }] },
         { show: false, type: 'piecewise', seriesIndex: 1, dimension: 2, pieces: [{ value: 1, color: COLORS.plannedPartial }, { value: 0, color: COLORS.plannedEmpty }] },
+        { show: false, type: 'piecewise', seriesIndex: 2, dimension: 2, pieces: [{ value: 1, color: props.graduateLockMode === 'room' ? COLORS.lockedRoom : COLORS.lockedBed }, { value: 0, color: props.graduateLockMode === 'room' ? COLORS.lockedRoom : COLORS.lockedBed }] },
       ],
       series: [
         { name: '寝室状态', type: 'heatmap', z: 2, data: heatmap.data, label: { show: false }, itemStyle: { borderColor: 'rgba(10, 22, 40, 0.85)', borderWidth: 1 }, emphasis: { itemStyle: { borderColor: '#FFFFFF', borderWidth: 2 } } },
@@ -300,9 +459,21 @@ function renderCharts() {
           name: '排寝方案',
           type: 'heatmap',
           z: 4,
-          data: planOverlayData,
+          data: planOverlayData.candidate,
           label: { show: false },
           itemStyle: { borderColor: 'rgba(255, 255, 255, 0.7)', borderWidth: 1 },
+          emphasis: { itemStyle: { borderColor: '#FFFFFF', borderWidth: 2 } },
+        },
+        {
+          name: '研究生锁定',
+          type: 'heatmap',
+          z: 5,
+          data: planOverlayData.locked.map((item) => ({
+            value: item,
+            itemStyle: { color: item[8] === 'room' ? COLORS.lockedRoom : COLORS.lockedBed },
+          })),
+          label: { show: false },
+          itemStyle: { borderColor: '#FFFFFF', borderWidth: 1 },
           emphasis: { itemStyle: { borderColor: '#FFFFFF', borderWidth: 2 } },
         },
       ],
@@ -346,12 +517,13 @@ onMounted(() => {
 })
 
 watch(() => [props.campusId, props.campusName, props.sourceBeds], loadRows)
-watch(() => [props.allocationSnapshot, props.selectedCollegeId], async () => {
+watch(() => [props.allocationSnapshot, props.lockedAllocationSnapshot, props.graduateLockMode, props.selectedCollegeId], async () => {
   await nextTick()
   renderCharts()
 })
 
 onBeforeUnmount(() => {
+  clearTimeout(hoverTooltipTimer)
   resizeObserver?.disconnect()
   charts.forEach((chart) => chart.dispose())
   charts.clear()
@@ -371,6 +543,8 @@ onBeforeUnmount(() => {
         <span><i class="heatmap-legend__marker heatmap-legend__marker--full"></i>已住满</span>
         <span><i class="heatmap-legend__marker heatmap-legend__marker--planned-empty"></i>方案分配全空寝室</span>
         <span><i class="heatmap-legend__marker heatmap-legend__marker--planned-partial"></i>方案插空寝室</span>
+        <span><i class="heatmap-legend__marker heatmap-legend__marker--locked-room"></i>研究生整间锁定</span>
+        <span><i class="heatmap-legend__marker heatmap-legend__marker--locked-bed"></i>研究生床位锁定</span>
       </div>
     </div>
     <div v-loading="loading" class="zone-heatmap-grid"
@@ -395,6 +569,64 @@ onBeforeUnmount(() => {
     </div>
     <el-empty v-if="!loading && !rows.length" :description="errorMessage || '暂无寝室数据'" />
   </section>
+
+  <div
+    v-if="hoverTooltip.visible"
+    class="heatmap-hover-tooltip"
+    :style="{ left: `${hoverTooltip.left}px`, top: `${hoverTooltip.top}px` }"
+    role="tooltip"
+  >
+    <strong>{{ hoverTooltip.title }}</strong>
+    <span>{{ hoverTooltip.detail }}</span>
+    <small v-if="hoverTooltip.allocation">{{ hoverTooltip.allocation }}</small>
+  </div>
+
+  <el-dialog
+    v-model="roomDetailVisible"
+    class="allocation-room-detail-dialog"
+    width="min(1080px, 92vw)"
+    append-to-body
+    destroy-on-close
+  >
+    <template #header>
+      <div class="allocation-room-detail-dialog__title">
+        <span>{{ selectedRoom?.roomCode || '-' }} 寝室床位详情</span>
+        <small>{{ selectedRoom?.floor || '-' }} 层 · 床位入住信息</small>
+      </div>
+    </template>
+
+    <div class="allocation-room-detail-summary">
+      <span>床位入住明细</span>
+      <strong>{{ selectedRoomBedRows.length }} 条记录</strong>
+      <em v-if="selectedRoomPlanCount">方案预分配 {{ selectedRoomPlanCount }} 张</em>
+      <em v-if="selectedRoomVacancyPlanCount" class="allocation-room-detail-summary__vacancy">其中插空 {{ selectedRoomVacancyPlanCount }} 张</em>
+    </div>
+
+    <div class="allocation-room-detail-table">
+      <el-table
+        :data="selectedRoomBedRows"
+        max-height="480"
+        flexible
+        scrollbar-always-on
+        row-key="id"
+        :row-class-name="getRoomDetailRowClassName"
+        empty-text="暂无该寝室的床位数据"
+      >
+        <el-table-column prop="studentNo" label="学号" min-width="130" show-overflow-tooltip />
+        <el-table-column prop="studentName" label="姓名" min-width="110" show-overflow-tooltip />
+        <el-table-column prop="gender" label="性别" width="90">
+          <template #default="{ row }"><el-tag v-if="row.planAllocation" size="small" effect="dark" :type="row.gender === '男' ? 'primary' : 'danger'">{{ row.gender }}</el-tag><span v-else>{{ row.gender }}</span></template>
+        </el-table-column>
+        <el-table-column prop="collegeName" label="学院" min-width="190" show-overflow-tooltip>
+          <template #default="{ row }"><span :class="{ 'plan-college-highlight': row.planAllocation }">{{ row.collegeName }}</span></template>
+        </el-table-column>
+        <el-table-column prop="counselorName" label="辅导员" min-width="130" show-overflow-tooltip />
+        <el-table-column prop="counselorPhone" label="辅导员电话" min-width="150" show-overflow-tooltip />
+        <el-table-column prop="classTeacherName" label="班主任" min-width="130" show-overflow-tooltip />
+        <el-table-column prop="classTeacherPhone" label="班主任电话" min-width="150" show-overflow-tooltip />
+      </el-table>
+    </div>
+  </el-dialog>
 </template>
 
 <style scoped>
@@ -472,6 +704,35 @@ onBeforeUnmount(() => {
 .heatmap-legend__marker--planned-partial {
   background: #0091ff;
 }
+
+.heatmap-legend__marker--locked-room {
+  background: #f97316;
+}
+
+.heatmap-legend__marker--locked-bed {
+  background: #22d3ee;
+}
+
+.heatmap-hover-tooltip {
+  position: fixed;
+  z-index: 3000;
+  display: grid;
+  max-width: 220px;
+  gap: 2px;
+  padding: 5px 8px;
+  border: 1px solid rgba(147, 197, 253, .34);
+  border-radius: 4px;
+  color: #e8f1ff;
+  background: rgba(5, 18, 38, .96);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .22);
+  font-size: 10px;
+  line-height: 14px;
+  pointer-events: none;
+}
+
+.heatmap-hover-tooltip strong { color: #fff; font-size: 11px; }
+.heatmap-hover-tooltip span { color: #c7d6ee; }
+.heatmap-hover-tooltip small { color: #93c5fd; font-size: 10px; }
 
 
 .zone-heatmap-grid {
@@ -595,6 +856,96 @@ onBeforeUnmount(() => {
   color: var(--muted);
   font-size: .75rem;
 }
+
+:global(.allocation-room-detail-dialog.el-dialog) {
+  --el-dialog-bg-color: #0a1628;
+  --el-bg-color: #0a1628;
+  --el-fill-color-blank: #0a1628;
+  --el-text-color-primary: #e8f1ff;
+  --el-text-color-regular: #c7d6ee;
+  --el-border-color-lighter: rgba(147, 197, 253, .18);
+  margin-top: 8vh;
+  border: 1px solid rgba(147, 197, 253, .3);
+  border-radius: 10px;
+  background: linear-gradient(145deg, #0d1d35, #081528) !important;
+  box-shadow: 0 22px 56px rgba(0, 0, 0, .52), 0 0 0 1px rgba(96, 165, 250, .08) inset;
+}
+
+:global(.allocation-room-detail-dialog .el-dialog__header) {
+  margin-right: 0;
+  padding: 18px 22px;
+  border-bottom: 1px solid rgba(147, 197, 253, .2);
+  background: linear-gradient(90deg, rgba(30, 64, 115, .42), rgba(10, 22, 40, 0));
+}
+
+:global(.allocation-room-detail-dialog .el-dialog__body) {
+  padding: 18px 22px 22px;
+}
+
+:global(.allocation-room-detail-dialog .el-dialog__headerbtn) {
+  top: 14px;
+  right: 16px;
+}
+
+:global(.allocation-room-detail-dialog .el-dialog__close) {
+  color: #9fb3d1;
+}
+
+.allocation-room-detail-dialog__title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding-right: 32px;
+  color: #e8f1ff;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.allocation-room-detail-dialog__title small {
+  color: #9fb3d1;
+  font-family: "DIN Alternate", Consolas, monospace;
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.allocation-room-detail-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 9px 12px;
+  border: 1px solid rgba(147, 197, 253, .16);
+  border-radius: 6px;
+  color: #bfdbfe;
+  background: rgba(15, 35, 65, .58);
+  font-size: 13px;
+}
+
+.allocation-room-detail-summary strong { color: #60a5fa; font-family: "DIN Alternate", Consolas, monospace; }
+.allocation-room-detail-summary em { padding: 2px 7px; border: 1px solid rgba(96, 165, 250, .55); border-radius: 4px; color: #dbeafe; background: rgba(37, 99, 235, .2); font-size: 12px; font-style: normal; }
+.allocation-room-detail-summary .allocation-room-detail-summary__vacancy { border-color: rgba(250, 204, 21, .7); color: #fef3c7; background: rgba(161, 98, 7, .24); }
+.allocation-room-detail-table { overflow: hidden; border: 1px solid rgba(147, 197, 253, .18); border-radius: 7px; }
+
+:global(.allocation-room-detail-dialog .el-table) {
+  --el-fill-color-blank: #0a1628;
+  --el-bg-color: #0a1628;
+  --el-table-bg-color: #0a1628;
+  --el-table-tr-bg-color: rgba(9, 25, 48, .78);
+  --el-table-header-bg-color: rgba(11, 34, 65, .96);
+  --el-table-text-color: #e8f1ff;
+  --el-table-header-text-color: #bfdbfe;
+  --el-table-border-color: rgba(147, 197, 253, .16);
+  --el-table-row-hover-bg-color: rgba(59, 130, 246, .18);
+}
+
+:global(.allocation-room-detail-dialog .el-table th.el-table__cell) { height: 42px; font-size: 12px; font-weight: 600; background: rgba(11, 34, 65, .96) !important; }
+:global(.allocation-room-detail-dialog .el-table td.el-table__cell) { height: 44px; font-size: 13px; background: rgba(9, 25, 48, .78) !important; }
+:global(.allocation-room-detail-dialog .el-table__inner-wrapper::before) { display: none; }
+:global(.allocation-room-detail-dialog .available-bed-row > td.el-table__cell .cell) { font-weight: 700; }
+:global(.allocation-room-detail-dialog .planned-bed-row > td.el-table__cell) { background: rgba(100, 66, 180, .28) !important; }
+:global(.allocation-room-detail-dialog .planned-vacancy-bed-row > td.el-table__cell) { background: rgba(0, 145, 255, .28) !important; box-shadow: inset 3px 0 #0091ff; }
+.plan-college-highlight { color: #fef3c7; font-weight: 750; }
 
 @media (max-width: 760px) {
   .heatmap-panel__heading {

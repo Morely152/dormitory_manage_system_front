@@ -5,7 +5,6 @@ const ROOM_STATE = Object.freeze({
 })
 
 const GENDER_LABELS = Object.freeze({ male: '男生', female: '女生' })
-const LEVEL_LABELS = Object.freeze({ undergraduate: '本科生', graduate: '研究生' })
 
 function firstDefined(source, fields) {
   for (const field of fields) {
@@ -43,6 +42,12 @@ function isAllocatableBed(bed) {
     && (bed.currentStudentId === null || bed.currentStudentId === undefined || bed.currentStudentId === '')
 }
 
+function updateRoomState(room) {
+  room.originalState = room.occupiedBeds === 0
+    ? ROOM_STATE.EMPTY
+    : room.availableBeds > 0 ? ROOM_STATE.PARTIAL : ROOM_STATE.FULL
+}
+
 function normalizeRooms(beds) {
   const rooms = new Map()
   beds.forEach((bed, index) => {
@@ -75,6 +80,8 @@ function normalizeRooms(beds) {
         occupiedBeds: 0,
         availableBeds: 0,
         reserved: false,
+        graduateRoomLocked: false,
+        lockedGraduateBeds: 0,
         plannedBeds: 0,
         ownerBatchKey: '',
         allocations: [],
@@ -88,17 +95,39 @@ function normalizeRooms(beds) {
 
   return [...rooms.values()].map((room) => {
     room.totalBeds = room.totalBeds > 0 ? room.totalBeds : room.returnedBeds
-    room.originalState = room.occupiedBeds === 0
-      ? ROOM_STATE.EMPTY
-      : room.availableBeds > 0 ? ROOM_STATE.PARTIAL : ROOM_STATE.FULL
+    updateRoomState(room)
     return room
   })
 }
 
-function pathBuildingKeys(paths) {
-  return new Set((Array.isArray(paths) ? paths : [])
-    .filter((path) => Array.isArray(path) && path.length >= 2)
-    .map((path) => locationKey(path[1], `unknown:${path[1]}`)))
+function allocationBeds(snapshotRoom) {
+  return (snapshotRoom?.allocations || []).reduce((sum, item) => sum + Math.max(0, Number(item.plannedBeds) || 0), 0)
+}
+
+function applyGraduateLock(rooms, graduateLock) {
+  if (!graduateLock?.snapshot?.rooms?.length) return ''
+  const roomByKey = new Map(rooms.map((room) => [room.key, room]))
+  const lockMode = graduateLock.lockMode
+  if (!['room', 'bed'].includes(lockMode)) return '研究生锁定方式无效，请先解锁并重新锁定方案'
+
+  for (const lockedRoom of graduateLock.snapshot.rooms) {
+    const room = roomByKey.get(lockedRoom.roomKey)
+    const plannedBeds = allocationBeds(lockedRoom)
+    if (!plannedBeds) continue
+    if (!room) return '研究生锁定房间已不在当前床位库存中，请先解锁并重新生成研究生方案'
+    if (lockMode === 'room') {
+      room.graduateRoomLocked = true
+      continue
+    }
+    if (room.availableBeds < plannedBeds) {
+      return `研究生床位锁定与当前库存不一致：${room.buildingName}${room.roomCode}房间仅剩 ${room.availableBeds} 张可用床位，请先解锁并重新生成研究生方案`
+    }
+    room.availableBeds -= plannedBeds
+    room.occupiedBeds += plannedBeds
+    room.lockedGraduateBeds = plannedBeds
+    updateRoomState(room)
+  }
+  return ''
 }
 
 function reserveEmptyRooms(rooms, zoneRows) {
@@ -108,6 +137,7 @@ function reserveEmptyRooms(rooms, zoneRows) {
   ]))
   for (const [zoneKey, count] of requested) {
     const candidates = rooms.filter((room) => room.originalState === ROOM_STATE.EMPTY
+      && !room.graduateRoomLocked
       && room.availableBeds > 0
       && locationKey(room.zoneId, room.zoneName) === zoneKey)
       .sort(roomSort)
@@ -119,48 +149,57 @@ function reserveEmptyRooms(rooms, zoneRows) {
   return ''
 }
 
-function buildDemandBatches(studentRows) {
+function buildUndergraduateDemandBatches(studentRows) {
   const batches = []
   ;(Array.isArray(studentRows) ? studentRows : []).forEach((college) => {
     ;['male', 'female'].forEach((gender) => {
-      ;['graduate', 'undergraduate'].forEach((level) => {
-        const params = college?.[gender]?.[level] || {}
-        const count = Math.max(0, Math.floor(Number(params.count) || 0))
-        if (!count) return
-        const vacancyRatio = Number(params.vacancyRatio)
-        if (!Number.isFinite(vacancyRatio) || vacancyRatio < 0 || vacancyRatio > 100) {
-          throw new Error(`“${college.collegeName || '未命名学院'}”${GENDER_LABELS[gender]}${LEVEL_LABELS[level]}的插空比必须在 0 至 100 之间`)
-        }
-        const collegeId = college.collegeId ?? college.collegeName
-        const key = `${collegeId}|${level}|${gender}`
-        batches.push({
-          key,
-          collegeId,
-          collegeName: college.collegeName || '未命名学院',
-          level,
-          gender,
-          count,
-          vacancyRatio,
-          partialTarget: Math.round(count * vacancyRatio / 100),
-        })
+      const params = college?.[gender]?.undergraduate || {}
+      const count = Math.max(0, Math.floor(Number(params.count) || 0))
+      if (!count) return
+      const vacancyRatio = Number(params.vacancyRatio)
+      if (!Number.isFinite(vacancyRatio) || vacancyRatio < 0 || vacancyRatio > 100) {
+        throw new Error(`“${college.collegeName || '未命名学院'}”${GENDER_LABELS[gender]}本科生的插空比必须在 0 至 100 之间`)
+      }
+      const collegeId = college.collegeId ?? college.collegeName
+      batches.push({
+        key: `${collegeId}|undergraduate|${gender}`,
+        collegeId,
+        collegeName: college.collegeName || '未命名学院',
+        level: 'undergraduate',
+        gender,
+        count,
+        vacancyRatio,
+        partialTarget: Math.round(count * vacancyRatio / 100),
       })
     })
   })
-  return batches.sort((left, right) => {
-    if (left.level !== right.level) return left.level === 'graduate' ? -1 : 1
-    return String(left.collegeName).localeCompare(String(right.collegeName), 'zh-CN', { numeric: true })
-      || left.gender.localeCompare(right.gender)
-  })
+  return batches.sort((left, right) => String(left.collegeName).localeCompare(String(right.collegeName), 'zh-CN', { numeric: true })
+    || left.gender.localeCompare(right.gender))
 }
 
-function allocateFromRooms({ rooms, batch, count, state, allowedBuildings, excludedBuildings }) {
+function buildGraduateDemandBatches({ maleCount, femaleCount }) {
+  return ['male', 'female'].map((gender) => {
+    const count = Math.max(0, Math.floor(Number(gender === 'male' ? maleCount : femaleCount) || 0))
+    return count ? {
+      key: `GRADUATE|graduate|${gender}`,
+      collegeId: 'GRADUATE',
+      collegeName: '研究生',
+      level: 'graduate',
+      gender,
+      count,
+      vacancyRatio: 0,
+      partialTarget: 0,
+    } : null
+  }).filter(Boolean)
+}
+
+function allocateFromRooms({ rooms, batch, count, state }) {
   let remaining = count
   const candidates = rooms
     .filter((room) => room.originalState === state
       && !room.reserved
+      && !room.graduateRoomLocked
       && matchesRoomGender(room.roomGenderName, batch.gender)
-      && (!allowedBuildings || allowedBuildings.has(room.buildingKey))
-      && (!excludedBuildings || !excludedBuildings.has(room.buildingKey))
       && (!room.ownerBatchKey || room.ownerBatchKey === batch.key)
       && room.availableBeds > room.plannedBeds)
     .sort(roomSort)
@@ -183,30 +222,51 @@ function allocateFromRooms({ rooms, batch, count, state, allowedBuildings, exclu
   return remaining
 }
 
-function allocateBatch(rooms, batch, graduateBuildingTiers, graduatePriorityBuildings) {
+function allocateGraduateFromBuilding(rooms, batch, count, buildingKey) {
+  let remaining = count
+  const candidates = rooms
+    .filter((room) => room.buildingKey === buildingKey
+      && !room.reserved
+      && matchesRoomGender(room.roomGenderName, batch.gender)
+      && (!room.ownerBatchKey || room.ownerBatchKey === batch.key)
+      && room.availableBeds > room.plannedBeds)
+    .sort(roomSort)
+  candidates.forEach((room) => {
+    if (!remaining) return
+    const allocated = Math.min(remaining, room.availableBeds - room.plannedBeds)
+    if (!allocated) return
+    room.ownerBatchKey = batch.key
+    room.plannedBeds += allocated
+    room.allocations.push({
+      collegeId: batch.collegeId,
+      collegeName: batch.collegeName,
+      level: batch.level,
+      gender: batch.gender,
+      plannedBeds: allocated,
+    })
+    remaining -= allocated
+  })
+  return remaining
+}
+
+function allocateUndergraduateBatch(rooms, batch) {
   const states = [
     { state: ROOM_STATE.PARTIAL, count: batch.partialTarget, label: '可插空寝室' },
     { state: ROOM_STATE.EMPTY, count: batch.count - batch.partialTarget, label: '全空寝室' },
   ]
   for (const target of states) {
-    let remaining = target.count
-    const tiers = batch.level === 'graduate' ? graduateBuildingTiers : [null]
-    for (const buildings of tiers) {
-      if (!remaining) break
-      remaining = allocateFromRooms({
-        rooms,
-        batch,
-        count: remaining,
-        state: target.state,
-        allowedBuildings: buildings,
-        excludedBuildings: batch.level === 'undergraduate' ? graduatePriorityBuildings : null,
-      })
-    }
+    const remaining = allocateFromRooms({ rooms, batch, count: target.count, state: target.state })
     if (remaining) {
-      return `“${batch.collegeName}”${GENDER_LABELS[batch.gender]}${LEVEL_LABELS[batch.level]}缺少 ${remaining} 个${target.label}床位，无法满足 ${batch.vacancyRatio}% 插空比`
+      return `“${batch.collegeName}”${GENDER_LABELS[batch.gender]}本科生缺少 ${remaining} 个${target.label}床位，无法满足 ${batch.vacancyRatio}% 插空比`
     }
   }
   return ''
+}
+
+function pathBuildingKeys(paths) {
+  return (Array.isArray(paths) ? paths : [])
+    .filter((path) => Array.isArray(path) && path.length >= 2)
+    .map((path) => locationKey(path[1], `unknown:${path[1]}`))
 }
 
 function calculateMetrics(rooms, collegeId) {
@@ -227,44 +287,66 @@ function calculateMetrics(rooms, collegeId) {
   }
 }
 
+function createSnapshot(rooms, batches) {
+  const plannedRooms = rooms.filter((room) => room.plannedBeds > 0).map((room) => ({
+    roomKey: room.key,
+    roomId: room.roomId,
+    originalState: room.originalState,
+    plannedBeds: room.plannedBeds,
+    allocations: room.allocations,
+  }))
+  const collegeIds = [...new Set(batches.map((batch) => String(batch.collegeId)))]
+  const collegeMetrics = { ALL: calculateMetrics(rooms, 'ALL') }
+  collegeIds.forEach((collegeId) => { collegeMetrics[collegeId] = calculateMetrics(rooms, collegeId) })
+  return { rooms: plannedRooms, collegeMetrics }
+}
+
 export function getAllocationMetrics(snapshot, collegeId = 'ALL') {
   if (!snapshot) return { emptyRooms: 0, emptyRoomBeds: 0, vacancyRooms: 0, vacancyBeds: 0 }
   return snapshot.collegeMetrics[String(collegeId)] || { emptyRooms: 0, emptyRoomBeds: 0, vacancyRooms: 0, vacancyBeds: 0 }
 }
 
-export function buildAllocationSnapshot({ beds, studentRows, zoneRows, priorityFullBuildingPaths, bufferFullBuildingPaths }) {
+export function buildUndergraduateAllocationSnapshot({ beds, studentRows, zoneRows, graduateLock = null }) {
   try {
     const rooms = normalizeRooms(Array.isArray(beds) ? beds : [])
     if (!rooms.length) return { error: '未获取到可用于排寝的床位数据', snapshot: null }
+    const lockError = applyGraduateLock(rooms, graduateLock)
+    if (lockError) return { error: lockError, snapshot: null }
     const reserveError = reserveEmptyRooms(rooms, zoneRows)
     if (reserveError) return { error: reserveError, snapshot: null }
-
-    const priorityBuildings = pathBuildingKeys(priorityFullBuildingPaths)
-    const bufferBuildings = pathBuildingKeys(bufferFullBuildingPaths)
-    const graduateBuildingTiers = [priorityBuildings, bufferBuildings].filter((buildings) => buildings.size)
-    const batches = buildDemandBatches(studentRows)
-    const graduateCount = batches.filter((batch) => batch.level === 'graduate').reduce((sum, batch) => sum + batch.count, 0)
-    if (graduateCount && !graduateBuildingTiers.length) {
-      return { error: '请先选择研究生优先住满楼栋或住满缓冲楼栋', snapshot: null }
-    }
-
+    const batches = buildUndergraduateDemandBatches(studentRows)
     for (const batch of batches) {
-      const allocationError = allocateBatch(rooms, batch, graduateBuildingTiers, priorityBuildings)
+      const allocationError = allocateUndergraduateBatch(rooms, batch)
       if (allocationError) return { error: allocationError, snapshot: null }
     }
-
-    const plannedRooms = rooms.filter((room) => room.plannedBeds > 0).map((room) => ({
-      roomKey: room.key,
-      roomId: room.roomId,
-      originalState: room.originalState,
-      plannedBeds: room.plannedBeds,
-      allocations: room.allocations,
-    }))
-    const collegeIds = [...new Set(batches.map((batch) => String(batch.collegeId)))]
-    const collegeMetrics = { ALL: calculateMetrics(rooms, 'ALL') }
-    collegeIds.forEach((collegeId) => { collegeMetrics[collegeId] = calculateMetrics(rooms, collegeId) })
-    return { snapshot: { rooms: plannedRooms, collegeMetrics }, error: null }
+    return { snapshot: createSnapshot(rooms, batches), error: null }
   } catch (error) {
-    return { error: error.message || '生成排寝方案失败', snapshot: null }
+    return { error: error.message || '生成本科生排寝方案失败', snapshot: null }
   }
+}
+
+export function buildGraduateAllocationSnapshot({ beds, maleCount, femaleCount, priorityBuildingPaths, bufferBuildingPaths }) {
+  try {
+    const rooms = normalizeRooms(Array.isArray(beds) ? beds : [])
+    if (!rooms.length) return { error: '未获取到可用于排寝的床位数据', snapshot: null }
+    const buildingKeys = [...pathBuildingKeys(priorityBuildingPaths), ...pathBuildingKeys(bufferBuildingPaths)]
+    if (buildingKeys.length !== 4) return { error: '研究生固定楼栋未完整配置，请确认西苑十二至十五栋均存在', snapshot: null }
+    const batches = buildGraduateDemandBatches({ maleCount, femaleCount })
+    for (const batch of batches) {
+      let remaining = batch.count
+      for (const buildingKey of buildingKeys) {
+        if (!remaining) break
+        remaining = allocateGraduateFromBuilding(rooms, batch, remaining, buildingKey)
+      }
+      if (remaining) return { error: `研究生${GENDER_LABELS[batch.gender]}缺少 ${remaining} 张可用床位`, snapshot: null }
+    }
+    return { snapshot: createSnapshot(rooms, batches), error: null }
+  } catch (error) {
+    return { error: error.message || '生成研究生排寝方案失败', snapshot: null }
+  }
+}
+
+// Keeps the former module entry point available for callers that only allocate undergraduates.
+export function buildAllocationSnapshot(options) {
+  return buildUndergraduateAllocationSnapshot(options)
 }
