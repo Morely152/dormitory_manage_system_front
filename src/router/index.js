@@ -18,6 +18,7 @@ const implementedComponents = {
   'room-management': () => import('@/views/RoomManagementView.vue'),
   'operation-log': () => import('@/views/OperationLogView.vue'),
   'bed-allocation': () => import('@/views/BedAllocationView.vue'),
+  'bed-allocation-new': () => import('@/views/BedAllocationNewView.vue'),
   'repair-application': () => import('@/views/RepairApplicationView.vue'),
 }
 
@@ -32,7 +33,7 @@ const businessRoutes = ACCESS_MODULES.map((module) => ({
     title: module.title,
     moduleId: module.id,
     subsystemId: module.subsystem,
-    fullscreen: module.id === 'accommodation-query',
+    fullscreen: ['accommodation-query', 'bed-allocation-new'].includes(module.id),
   },
 }))
 
