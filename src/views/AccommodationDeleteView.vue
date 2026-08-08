@@ -41,7 +41,12 @@ const filters = reactive({
   building: '',
   room: '',
   gradeYear: '',
+  studentName: '',
+  studentNo: '',
 })
+
+const studentNameInput = ref('')
+const studentNoInput = ref('')
 
 const loading = reactive({
   colleges: false,
@@ -79,6 +84,11 @@ const studentBedRows = computed(() => {
 let bedRequestVersion = 0
 let zoneRequestVersion = 0
 let accommodationRequestVersion = 0
+
+function applyStudentSearch() {
+  filters.studentName = studentNameInput.value.trim()
+  filters.studentNo = studentNoInput.value.trim()
+}
 
 watch(
   () => [pagination.currentPage, pagination.pageSize],
@@ -177,6 +187,8 @@ async function loadBedRows() {
       zoneId: filters.zone || undefined,
       buildingId: filters.building || undefined,
       roomId: filters.room || undefined,
+      studentName: filters.studentName || undefined,
+      studentNo: filters.studentNo || undefined,
     }
     if (!needsClientFilter) {
       query.page = pagination.currentPage - 1
@@ -487,6 +499,26 @@ async function handleDelete() {
           />
         </el-select>
       </label>
+      <label>
+        <span>姓名</span>
+        <el-input
+          v-model="studentNameInput"
+          clearable
+          placeholder="按回车搜索"
+          @keyup.enter="applyStudentSearch"
+          @clear="applyStudentSearch"
+        />
+      </label>
+      <label>
+        <span>学号</span>
+        <el-input
+          v-model="studentNoInput"
+          clearable
+          placeholder="按回车搜索"
+          @keyup.enter="applyStudentSearch"
+          @clear="applyStudentSearch"
+        />
+      </label>
     </section>
 
     <section class="accommodation-delete-page__table" aria-labelledby="delete-table-title">
@@ -519,7 +551,7 @@ async function handleDelete() {
       </el-table>
 
       <div class="accommodation-delete-page__pagination">
-        <el-pagination v-model:current-page="pagination.currentPage" v-model:page-size="pagination.pageSize" :page-sizes="[50, 100, 200,10000]" :total="pagination.total" background layout="total, sizes, prev, pager, next, jumper" @size-change="pagination.currentPage = 1" />
+        <el-pagination v-model:current-page="pagination.currentPage" v-model:page-size="pagination.pageSize" :page-sizes="[50, 100, 200, 500, 1000]" :total="pagination.total" background layout="total, sizes, prev, pager, next, jumper" @size-change="pagination.currentPage = 1" />
       </div>
     </section>
   </div>
