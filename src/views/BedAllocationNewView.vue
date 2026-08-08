@@ -1,12 +1,13 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { Delete, OfficeBuilding, School, User, VideoPlay } from '@element-plus/icons-vue'
+import { Delete, Document, Download, OfficeBuilding, School, User, VideoPlay } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getCollegeOptions } from '@/api/accommodationImport'
 import { getBeds } from '@/api/beds'
 import { getBuildings, getCampuses, getZones } from '@/api/roomManagement'
 import AccommodationHeatmapPanel from '@/components/AccommodationHeatmapPanel.vue'
 import { buildAllocationSnapshot, getAllocationMetrics } from '@/features/allocation/bedAllocationNew'
+import { buildAllocationPreview } from '@/features/allocation/bedAllocationPreview'
 
 const CACHE_KEY = 'dormitory-bed-allocation-new-form-v1'
 const DEFAULT_CAMPUS_NAME = '蓉江校区'
@@ -23,6 +24,7 @@ const lastSavedAt = ref('')
 const studentDialogVisible = ref(false)
 const zoneDialogVisible = ref(false)
 const graduateRangeDialogVisible = ref(false)
+const previewDialogVisible = ref(false)
 const selectedCollegeId = ref('ALL')
 const allocationSnapshot = ref(null)
 const allocationBeds = ref(null)
@@ -57,6 +59,11 @@ const allocationMetricCards = [
 ]
 
 const allocationMetrics = computed(() => getAllocationMetrics(allocationSnapshot.value, selectedCollegeId.value))
+const allocationPreview = computed(() => buildAllocationPreview({
+  snapshot: allocationSnapshot.value,
+  beds: allocationBeds.value,
+  campusName: draft.campusName,
+}))
 
 const graduateRangeCascaderProps = {
   multiple: true,
@@ -401,6 +408,137 @@ async function startAllocation() {
   }
 }
 
+function openAllocationPreview() {
+  if (!allocationSnapshot.value) {
+    ElMessage.warning('请先生成排寝方案')
+    return
+  }
+  previewDialogVisible.value = true
+}
+
+function detailedSheetRows(colleges) {
+  // The template uses one visual header row, with "性别" spanning the gender
+  // and gender-count columns. Keeping this as a single AOA row prevents Excel
+  // from rendering a second, offset header row.
+  const rows = [['学院', '人数', '性别', null, '楼栋', '房间号', '备注']]
+  const merges = [
+    { s: { r: 0, c: 2 }, e: { r: 0, c: 3 } },
+  ]
+  colleges.forEach((college) => {
+    const collegeStart = rows.length
+    college.genders.forEach((genderGroup) => {
+      const genderStart = rows.length
+      genderGroup.rows.forEach((row) => {
+        rows.push([college.collegeName, college.collegeTotal, genderGroup.gender === 'male' ? '男' : '女', genderGroup.genderTotal, row.buildingName, row.roomText, row.remark])
+      })
+      if (genderGroup.rows.length > 1) {
+        merges.push({ s: { r: genderStart, c: 2 }, e: { r: genderStart + genderGroup.rows.length - 1, c: 2 } })
+        merges.push({ s: { r: genderStart, c: 3 }, e: { r: genderStart + genderGroup.rows.length - 1, c: 3 } })
+      }
+    })
+    const collegeEnd = rows.length - 1
+    if (collegeEnd > collegeStart) {
+      merges.push({ s: { r: collegeStart, c: 0 }, e: { r: collegeEnd, c: 0 } })
+      merges.push({ s: { r: collegeStart, c: 1 }, e: { r: collegeEnd, c: 1 } })
+    }
+  })
+  return { rows, merges }
+}
+
+function graduateSheetRows(genders) {
+  const rows = [['性别', '人数', '楼栋', '房间号', '备注']]
+  const merges = []
+  genders.forEach((genderGroup) => {
+    const start = rows.length
+    genderGroup.rows.forEach((row) => rows.push([genderGroup.gender === 'male' ? '男' : '女', genderGroup.genderTotal, row.buildingName, row.roomText, row.remark]))
+    if (genderGroup.rows.length > 1) {
+      merges.push({ s: { r: start, c: 0 }, e: { r: start + genderGroup.rows.length - 1, c: 0 } })
+      merges.push({ s: { r: start, c: 1 }, e: { r: start + genderGroup.rows.length - 1, c: 1 } })
+    }
+  })
+  return { rows, merges }
+}
+
+function southKangSheetRows(rowsData) {
+  return {
+    rows: [
+      ['学院', '楼栋', '分配人数', '分配楼层', '占用房间数'],
+      ...rowsData.map((row) => [row.collegeName, row.buildingName, row.assignedBeds, row.floorText, row.roomCount]),
+    ],
+    merges: [],
+  }
+}
+
+function styleAllocationWorksheet(worksheet, headerRows = 1, spreadsheet, roomColumn = null) {
+  const range = spreadsheet.utils.decode_range(worksheet['!ref'] || 'A1:A1')
+  const border = {
+    top: { style: 'thin', color: { rgb: 'AFC0D4' } },
+    bottom: { style: 'thin', color: { rgb: 'AFC0D4' } },
+    left: { style: 'thin', color: { rgb: 'AFC0D4' } },
+    right: { style: 'thin', color: { rgb: 'AFC0D4' } },
+  }
+  for (let rowIndex = range.s.r; rowIndex <= range.e.r; rowIndex += 1) {
+    for (let columnIndex = range.s.c; columnIndex <= range.e.c; columnIndex += 1) {
+      const address = spreadsheet.utils.encode_cell({ r: rowIndex, c: columnIndex })
+      // Create cells for the empty side of merged headers so Excel applies the
+      // same border/alignment across the full merged region.
+      const cell = worksheet[address] || (worksheet[address] = { t: 's', v: '' })
+      const isHeader = rowIndex < headerRows
+      cell.s = {
+        border,
+        alignment: {
+          horizontal: isHeader || columnIndex !== roomColumn ? 'center' : 'left',
+          vertical: 'center',
+          wrapText: true,
+        },
+        font: { name: 'Microsoft YaHei', sz: 10, color: { rgb: '1F2937' } },
+        ...(isHeader ? {
+          fill: { patternType: 'solid', fgColor: { rgb: 'DCEBFA' } },
+          font: { name: 'Microsoft YaHei', sz: 10, bold: true, color: { rgb: '173A66' } },
+        } : {}),
+      }
+    }
+  }
+  worksheet['!rows'] = Array.from({ length: range.e.r + 1 }, (_, index) => {
+    if (index < headerRows) return { hpt: 24 }
+    if (roomColumn === null) return { hpt: 24 }
+    const roomCell = worksheet[spreadsheet.utils.encode_cell({ r: index, c: roomColumn })]
+    const roomLength = String(roomCell?.v || '').length
+    return { hpt: Math.min(180, Math.max(30, 22 + Math.ceil(roomLength / 70) * 14)) }
+  })
+  worksheet['!freeze'] = { xSplit: 0, ySplit: headerRows }
+}
+
+async function exportAllocationPreview() {
+  if (!allocationSnapshot.value) return
+  const spreadsheet = await import('xlsx-js-style')
+  const XLSX = spreadsheet.default || spreadsheet
+  const workbook = XLSX.utils.book_new()
+  const preview = allocationPreview.value
+  const sheetDefinitions = preview.mode === 'south-kang'
+    ? [{ name: '南康校区', ...southKangSheetRows(preview.southKang) }]
+    : [
+      { name: '本科生', ...detailedSheetRows(preview.undergraduate) },
+      { name: '研究生', ...graduateSheetRows(preview.graduate) },
+    ]
+  sheetDefinitions.forEach((definition) => {
+    const worksheet = XLSX.utils.aoa_to_sheet(definition.rows)
+    worksheet['!merges'] = definition.merges
+    worksheet['!cols'] = definition.name === '南康校区'
+      ? [{ wch: 28 }, { wch: 20 }, { wch: 12 }, { wch: 18 }, { wch: 14 }]
+      : definition.name === '本科生'
+        // Match the markdown template proportions: the room column carries
+        // most of the width while the identifying columns stay compact.
+        ? [{ wch: 9 }, { wch: 7 }, { wch: 4 }, { wch: 4 }, { wch: 7 }, { wch: 90 }, { wch: 11 }]
+        : [{ wch: 9 }, { wch: 10 }, { wch: 16 }, { wch: 90 }, { wch: 12 }]
+    const roomColumn = definition.name === '本科生' ? 5 : definition.name === '研究生' ? 3 : null
+    styleAllocationWorksheet(worksheet, 1, XLSX, roomColumn)
+    XLSX.utils.book_append_sheet(workbook, worksheet, definition.name)
+  })
+  const date = new Date().toISOString().slice(0, 10)
+  XLSX.writeFile(workbook, `${preview.campusName || '校区'}住宿预安排表-${date}.xlsx`, { cellStyles: true })
+}
+
 watch(draft, saveCache, { deep: true })
 watch(draft, () => {
   allocationSnapshot.value = null
@@ -431,6 +569,7 @@ onMounted(() => {
         <el-button class="parameter-action-button" type="primary" :icon="OfficeBuilding" @click="zoneDialogVisible = true">填写苑区参数</el-button>
         <el-button class="parameter-action-button" type="primary" :icon="School" @click="graduateRangeDialogVisible = true">选择研究生住宿范围</el-button>
         <el-button class="start-allocation-button" type="primary" :icon="VideoPlay" :loading="allocationRunning" @click="startAllocation">开始排寝</el-button>
+        <el-button class="preview-allocation-button" type="primary" plain :icon="Document" :disabled="!allocationSnapshot" @click="openAllocationPreview">预览表格</el-button>
         <label class="college-scheme-select">
           <el-select v-model="selectedCollegeId" aria-label="学院分配方案">
             <el-option
@@ -584,6 +723,84 @@ onMounted(() => {
         </div>
       </section>
     </el-dialog>
+
+    <el-dialog
+      v-model="previewDialogVisible"
+      class="parameter-dialog allocation-preview-dialog"
+      :title="`${draft.campusName || '当前校区'}住宿预安排表`"
+      width="min(96vw, 92rem)"
+      destroy-on-close
+    >
+      <div class="allocation-preview-toolbar">
+        <div class="allocation-preview-summary">
+          <strong>{{ allocationPreview.totalBeds }}</strong>
+          <span>实际分配人数</span>
+        </div>
+        <el-button type="primary" plain :icon="Download" @click="exportAllocationPreview">导出 Excel</el-button>
+      </div>
+
+      <div v-if="allocationPreview.mode === 'south-kang'" class="allocation-preview-section">
+        <div class="allocation-preview-section__heading">
+          <h3>南康校区</h3>
+          <span>楼栋分配汇总</span>
+        </div>
+        <div class="allocation-preview-table-wrap">
+          <table class="allocation-preview-table allocation-preview-table--south">
+            <thead><tr><th>学院</th><th>楼栋</th><th>分配人数</th><th>分配楼层</th><th>占用房间数</th></tr></thead>
+            <tbody>
+              <tr v-for="row in allocationPreview.southKang" :key="`${row.collegeName}-${row.buildingName}`">
+                <td>{{ row.collegeName }}</td><td>{{ row.buildingName }}</td><td>{{ row.assignedBeds }} 人</td><td>{{ row.floorText }}</td><td>{{ row.roomCount }} 间</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <template v-else>
+        <div v-for="section in [{ key: 'undergraduate', title: '本科生', groups: allocationPreview.undergraduate }, { key: 'graduate', title: '研究生', groups: allocationPreview.graduate }]" :key="section.key" class="allocation-preview-section">
+          <div class="allocation-preview-section__heading">
+            <h3>{{ section.title }}</h3>
+            <span>{{ section.key === 'graduate' ? '按性别汇总' : '按学院、性别分组' }}</span>
+          </div>
+
+          <div v-if="section.key === 'undergraduate'" class="allocation-preview-table-wrap">
+            <table class="allocation-preview-table allocation-preview-table--detail">
+              <thead><tr><th rowspan="2">学院</th><th rowspan="2">人数</th><th colspan="2">按性别统计</th><th rowspan="2">楼栋</th><th rowspan="2">房间号</th><th rowspan="2">备注</th></tr><tr><th>性别</th><th>人数</th></tr></thead>
+              <tbody>
+                <template v-for="college in section.groups" :key="college.collegeName">
+                  <template v-for="gender in college.genders" :key="`${college.collegeName}-${gender.gender}`">
+                    <tr v-for="(row, rowIndex) in gender.rows" :key="`${college.collegeName}-${gender.gender}-${row.buildingName}`">
+                      <td v-if="gender.gender === college.genders[0].gender && rowIndex === 0" :rowspan="college.genders.reduce((sum, item) => sum + item.rows.length, 0)" class="allocation-preview-table__group-cell">{{ college.collegeName }}</td>
+                      <td v-if="gender.gender === college.genders[0].gender && rowIndex === 0" :rowspan="college.genders.reduce((sum, item) => sum + item.rows.length, 0)" class="allocation-preview-table__number-cell">{{ college.collegeTotal }}</td>
+                      <td v-if="rowIndex === 0" :rowspan="gender.rows.length" class="allocation-preview-table__gender-cell">{{ gender.gender === 'male' ? '男' : '女' }}</td>
+                      <td v-if="rowIndex === 0" :rowspan="gender.rows.length" class="allocation-preview-table__number-cell">{{ gender.genderTotal }}</td>
+                      <td>{{ row.buildingName }}</td><td class="allocation-preview-table__rooms">{{ row.roomText }}</td><td>{{ row.remark }}</td>
+                    </tr>
+                  </template>
+                </template>
+              </tbody>
+            </table>
+          </div>
+
+          <div v-else class="allocation-preview-table-wrap">
+            <table class="allocation-preview-table allocation-preview-table--graduate">
+              <thead><tr><th>性别</th><th>人数</th><th>楼栋</th><th>房间号</th><th>备注</th></tr></thead>
+              <tbody>
+                <template v-for="gender in section.groups" :key="gender.gender">
+                  <tr v-for="(row, rowIndex) in gender.rows" :key="`${gender.gender}-${row.buildingName}`">
+                    <td v-if="rowIndex === 0" :rowspan="gender.rows.length" class="allocation-preview-table__gender-cell">{{ gender.gender === 'male' ? '男' : '女' }}</td>
+                    <td v-if="rowIndex === 0" :rowspan="gender.rows.length" class="allocation-preview-table__number-cell">{{ gender.genderTotal }}</td>
+                    <td>{{ row.buildingName }}</td><td class="allocation-preview-table__rooms">{{ row.roomText }}</td><td>{{ row.remark }}</td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </template>
+
+      <el-empty v-if="!allocationPreview.totalBeds" description="暂无可预览的排寝结果" />
+    </el-dialog>
   </div>
 </template>
 
@@ -622,6 +839,9 @@ onMounted(() => {
 .dashboard-stage::-webkit-scrollbar-thumb, .table-scroll::-webkit-scrollbar-thumb { border: 2px solid rgba(5, 18, 38, .52); border-radius: 999px; background: linear-gradient(180deg, #60a5fa, #2563eb); }
 .parameter-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .625rem; margin-block-end: clamp(.75rem, 1.2vw, 1rem); }
 .parameter-action-button, .start-allocation-button { min-block-size: 2.5rem; padding-inline: 1.125rem; box-shadow: 0 .375rem .875rem rgba(15, 23, 42, .24); }
+.preview-allocation-button { min-block-size: 2.5rem; padding-inline: 1.125rem; border-color: rgba(96, 165, 250, .6); color: #bfdbfe; background: rgba(14, 42, 78, .66); box-shadow: 0 .375rem .875rem rgba(15, 23, 42, .2); }
+.preview-allocation-button:hover, .preview-allocation-button:focus-visible { border-color: #93c5fd; color: #fff; background: rgba(37, 99, 235, .55); }
+.preview-allocation-button.is-disabled { opacity: .48; }
 .parameter-action-button { border-color: #2563eb; color: #60a5fa; background: rgba(5, 18, 38, .86); }
 .parameter-action-button:hover, .parameter-action-button:focus-visible { border-color: #60a5fa; color: #bfdbfe; background: rgba(14, 42, 78, .92); }
 .start-allocation-button { border-color: #60a5fa; color: #fff; background: #2563eb; }
@@ -683,6 +903,31 @@ onMounted(() => {
 .campus-select :deep(.el-select__wrapper:hover), .campus-select :deep(.el-select__wrapper.is-focused) { box-shadow: 0 0 0 .0625rem #60a5fa inset; }
 .campus-select :deep(.el-select__selected-item), .campus-select :deep(.el-select__placeholder), .campus-select :deep(.el-select__caret) { color: var(--screen-text); }
 .table-loading { padding: 1.5rem; color: var(--screen-muted); text-align: center; }
+.allocation-preview-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-block-end: 1rem; }
+.allocation-preview-summary { display: flex; align-items: baseline; gap: .45rem; color: var(--screen-muted); }
+.allocation-preview-summary strong { color: #67e8f9; font: 700 1.5rem/1 "DIN Alternate", Consolas, monospace; }
+.allocation-preview-summary span { font-size: .78rem; }
+.allocation-preview-section { margin-block-end: 1.25rem; }
+.allocation-preview-section:last-child { margin-block-end: 0; }
+.allocation-preview-section__heading { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-block-end: .5rem; }
+.allocation-preview-section__heading h3 { margin: 0; color: #e0f2fe; font-size: 1rem; }
+.allocation-preview-section__heading span { color: var(--screen-muted); font-size: .72rem; }
+.allocation-preview-table-wrap { max-height: min(46vh, 34rem); overflow: auto; border: .0625rem solid var(--screen-border); scrollbar-color: rgba(147, 197, 253, .52) rgba(5, 18, 38, .52); scrollbar-width: thin; }
+.allocation-preview-table { width: 100%; min-width: 56rem; border-collapse: separate; border-spacing: 0; color: var(--screen-text); font-size: .78rem; }
+.allocation-preview-table th, .allocation-preview-table td { padding: .48rem .6rem; border-right: .0625rem solid var(--screen-border); border-bottom: .0625rem solid var(--screen-border); text-align: center; vertical-align: middle; }
+.allocation-preview-table th { position: sticky; top: 0; z-index: 2; background: #102b50; color: #cfe5ff; font-weight: 650; white-space: nowrap; }
+.allocation-preview-table thead tr:nth-child(2) th { top: 2.1rem; z-index: 3; }
+.allocation-preview-table tr > :last-child { border-right: 0; }
+.allocation-preview-table tbody tr:last-child td { border-bottom: 0; }
+.allocation-preview-table tbody tr:hover { background: rgba(96, 165, 250, .09); }
+.allocation-preview-table__group-cell, .allocation-preview-table__gender-cell { color: #e0f2fe; font-weight: 650; }
+.allocation-preview-table__number-cell { color: #bae6fd; font-family: "DIN Alternate", Consolas, monospace; font-weight: 700; }
+.allocation-preview-table__rooms { min-width: 25rem; color: #dbeafe; line-height: 1.5; text-align: left !important; }
+.allocation-preview-table--south { min-width: 48rem; }
+.allocation-preview-table--south td:nth-child(1) { min-width: 18rem; text-align: left; }
+.allocation-preview-table--south td:nth-child(2) { min-width: 12rem; }
+.allocation-preview-table--graduate { min-width: 54rem; }
+.allocation-preview-dialog :deep(.el-dialog__body) { padding-block-start: .9rem; }
 :global(.parameter-dialog.el-dialog) { --screen-border: rgba(147, 197, 253, .24); --screen-text: #e8f1ff; --screen-muted: #9fb3d1; overflow: hidden; border: .0625rem solid rgba(147, 197, 253, .3); border-radius: .625rem; background: #0a1d38; box-shadow: 0 1.5rem 4rem rgba(2, 8, 23, .5); }
 :global(.parameter-dialog .el-dialog__header) { margin-right: 0; padding: 1rem 1.25rem; border-bottom: .0625rem solid var(--screen-border); background: rgba(8, 28, 55, .94); }
 :global(.parameter-dialog .el-dialog__title) { color: #fff; font-size: 1.0625rem; font-weight: 650; }
@@ -705,10 +950,13 @@ onMounted(() => {
   .panel-heading__tools, .zone-toolbar { width: 100%; justify-content: space-between; }
   .parameter-actions { gap: .5rem; }
   .parameter-action-button, .start-allocation-button { flex: 1 1 10rem; }
+  .preview-allocation-button { flex: 1 1 10rem; }
   .college-scheme-select { align-items: flex-start; flex-direction: column; gap: .25rem; margin-inline-start: 0; }
   .college-scheme-select :deep(.el-select) { width: min(22rem, calc(100vw - 2rem)); }
   .allocation-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   :global(.parameter-dialog.el-dialog) { width: calc(100vw - 1rem) !important; margin: .5rem auto; }
   :global(.parameter-dialog .el-dialog__body) { max-height: calc(100dvh - 8rem); padding: .75rem; }
+  .allocation-preview-toolbar, .allocation-preview-section__heading { align-items: flex-start; flex-direction: column; }
+  .allocation-preview-table-wrap { max-height: 48vh; }
 }
 </style>
