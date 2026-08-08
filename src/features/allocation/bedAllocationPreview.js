@@ -42,6 +42,7 @@ function normalizeRoomMeta(beds) {
         campusName,
         zoneId,
         zoneName,
+        buildingId,
         buildingName: buildingName || '未命名楼栋',
         roomCode: roomCode || '--',
         floorNo: firstDefined(bed, ['floorNo', 'floor', 'floorNumber']) || '',
@@ -139,6 +140,39 @@ function buildBuildingRows(entries) {
   }))
 }
 
+function buildBuildingCollegeRows(entries) {
+  const groups = new Map()
+  mergeRoomEntries(entries).forEach((entry) => {
+    const key = `${entry.zoneId}|${entry.buildingId}|${entry.buildingName}|${entry.collegeId}|${entry.collegeName}`
+    if (!groups.has(key)) groups.set(key, {
+      buildingName: entry.buildingName,
+      collegeName: entry.collegeName,
+      entries: [],
+      assignedBeds: 0,
+    })
+    const group = groups.get(key)
+    group.entries.push(entry)
+    group.assignedBeds += entry.plannedBeds
+  })
+  const rows = [...groups.values()]
+    .sort((left, right) => compareNatural(`${left.buildingName}|${left.collegeName}`, `${right.buildingName}|${right.collegeName}`))
+    .map((group) => ({
+      ...group,
+      roomText: group.entries.sort((left, right) => compareNatural(left.roomCode, right.roomCode)).map((entry) => entry.roomLabel).join('、'),
+      roomCount: group.entries.length,
+      remark: `${group.assignedBeds}人`,
+    }))
+  rows.forEach((row, index) => {
+    const isStart = index === 0 || rows[index - 1].buildingName !== row.buildingName
+    row.buildingStart = isStart
+    if (isStart) {
+      const nextIndex = rows.slice(index).findIndex((item) => item.buildingName !== row.buildingName)
+      row.buildingRowspan = nextIndex === -1 ? rows.length - index : nextIndex
+    } else row.buildingRowspan = 0
+  })
+  return rows
+}
+
 function buildDetailedRows(entries, level) {
   const colleges = new Map()
   entries.filter((entry) => entry.level === level).forEach((entry) => {
@@ -168,6 +202,35 @@ function buildGraduateRows(entries) {
       rows: buildBuildingRows(genderEntries),
     }
   }).filter(Boolean)
+}
+
+function buildUndergraduateByZone(entries) {
+  const zones = new Map()
+  entries.filter((entry) => entry.level === 'undergraduate').forEach((entry) => {
+    const zoneKey = locationKey(entry.zoneId, entry.zoneName)
+    if (!zones.has(zoneKey)) zones.set(zoneKey, {
+      zoneName: entry.zoneName || '未命名苑区',
+      zoneTotal: 0,
+      genders: new Map(),
+    })
+    const zone = zones.get(zoneKey)
+    zone.zoneTotal += entry.plannedBeds
+    if (!zone.genders.has(entry.gender)) zone.genders.set(entry.gender, [])
+    zone.genders.get(entry.gender).push(entry)
+  })
+  return [...zones.values()]
+    .sort((left, right) => compareNatural(left.zoneName, right.zoneName))
+    .map((zone) => ({
+      ...zone,
+      genders: GENDER_ORDER.filter((gender) => zone.genders.has(gender)).map((gender) => {
+        const genderEntries = zone.genders.get(gender)
+        return {
+          gender,
+          genderTotal: genderEntries.reduce((sum, entry) => sum + entry.plannedBeds, 0),
+          rows: buildBuildingCollegeRows(genderEntries),
+        }
+      }),
+    }))
 }
 
 function numericFloors(entries) {
@@ -209,14 +272,16 @@ function buildSouthKangRows(entries) {
 
 export function buildAllocationPreview({ snapshot, beds, campusName = '' }) {
   const entries = buildEntries(snapshot, beds)
+  const undergraduateEntries = entries.filter((entry) => entry.level === 'undergraduate')
   const isSouthKang = String(campusName).includes('南康')
   return {
     campusName,
     mode: isSouthKang ? 'south-kang' : 'detailed',
     totalBeds: entries.reduce((sum, entry) => sum + entry.plannedBeds, 0),
     undergraduate: buildDetailedRows(entries, 'undergraduate'),
+    undergraduateByZone: buildUndergraduateByZone(undergraduateEntries),
+    undergraduateTotalBeds: undergraduateEntries.reduce((sum, entry) => sum + entry.plannedBeds, 0),
     graduate: buildGraduateRows(entries),
     southKang: buildSouthKangRows(entries),
   }
 }
-

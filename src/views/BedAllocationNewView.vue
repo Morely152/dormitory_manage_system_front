@@ -25,6 +25,7 @@ const studentDialogVisible = ref(false)
 const zoneDialogVisible = ref(false)
 const graduateRangeDialogVisible = ref(false)
 const previewDialogVisible = ref(false)
+const previewViewMode = ref('college')
 const selectedCollegeId = ref('ALL')
 const allocationSnapshot = ref(null)
 const allocationBeds = ref(null)
@@ -64,6 +65,9 @@ const allocationPreview = computed(() => buildAllocationPreview({
   beds: allocationBeds.value,
   campusName: draft.campusName,
 }))
+const activePreviewTotalBeds = computed(() => previewViewMode.value === 'zone'
+  ? allocationPreview.value.undergraduateTotalBeds
+  : allocationPreview.value.totalBeds)
 
 const graduateRangeCascaderProps = {
   multiple: true,
@@ -469,6 +473,33 @@ function southKangSheetRows(rowsData) {
   }
 }
 
+function undergraduateZoneSheetRows(zones) {
+  const rows = [['苑区', '人数', '性别', null, '楼栋', '学院', '房间号', '备注']]
+  const merges = [{ s: { r: 0, c: 2 }, e: { r: 0, c: 3 } }]
+  zones.forEach((zone) => {
+    const zoneStart = rows.length
+    zone.genders.forEach((genderGroup) => {
+      const genderStart = rows.length
+      genderGroup.rows.forEach((row) => {
+        rows.push([zone.zoneName, zone.zoneTotal, genderGroup.gender === 'male' ? '男' : '女', genderGroup.genderTotal, row.buildingName, row.collegeName, row.roomText, row.remark])
+        if (row.buildingStart && row.buildingRowspan > 1) {
+          merges.push({ s: { r: rows.length - 1, c: 4 }, e: { r: rows.length + row.buildingRowspan - 2, c: 4 } })
+        }
+      })
+      if (genderGroup.rows.length > 1) {
+        merges.push({ s: { r: genderStart, c: 2 }, e: { r: genderStart + genderGroup.rows.length - 1, c: 2 } })
+        merges.push({ s: { r: genderStart, c: 3 }, e: { r: genderStart + genderGroup.rows.length - 1, c: 3 } })
+      }
+    })
+    const zoneEnd = rows.length - 1
+    if (zoneEnd > zoneStart) {
+      merges.push({ s: { r: zoneStart, c: 0 }, e: { r: zoneEnd, c: 0 } })
+      merges.push({ s: { r: zoneStart, c: 1 }, e: { r: zoneEnd, c: 1 } })
+    }
+  })
+  return { rows, merges }
+}
+
 function styleAllocationWorksheet(worksheet, headerRows = 1, spreadsheet, roomColumn = null) {
   const range = spreadsheet.utils.decode_range(worksheet['!ref'] || 'A1:A1')
   const border = {
@@ -515,7 +546,9 @@ async function exportAllocationPreview() {
   const XLSX = spreadsheet.default || spreadsheet
   const workbook = XLSX.utils.book_new()
   const preview = allocationPreview.value
-  const sheetDefinitions = preview.mode === 'south-kang'
+  const sheetDefinitions = previewViewMode.value === 'zone'
+    ? [{ name: '本科生-按苑区', ...undergraduateZoneSheetRows(preview.undergraduateByZone) }]
+    : preview.mode === 'south-kang'
     ? [{ name: '南康校区', ...southKangSheetRows(preview.southKang) }]
     : [
       { name: '本科生', ...detailedSheetRows(preview.undergraduate) },
@@ -524,14 +557,16 @@ async function exportAllocationPreview() {
   sheetDefinitions.forEach((definition) => {
     const worksheet = XLSX.utils.aoa_to_sheet(definition.rows)
     worksheet['!merges'] = definition.merges
-    worksheet['!cols'] = definition.name === '南康校区'
+    worksheet['!cols'] = definition.name === '本科生-按苑区'
+      ? [{ wch: 9 }, { wch: 7 }, { wch: 4 }, { wch: 4 }, { wch: 7 }, { wch: 24 }, { wch: 90 }, { wch: 11 }]
+      : definition.name === '南康校区'
       ? [{ wch: 28 }, { wch: 20 }, { wch: 12 }, { wch: 18 }, { wch: 14 }]
       : definition.name === '本科生'
         // Match the markdown template proportions: the room column carries
         // most of the width while the identifying columns stay compact.
         ? [{ wch: 9 }, { wch: 7 }, { wch: 4 }, { wch: 4 }, { wch: 7 }, { wch: 90 }, { wch: 11 }]
         : [{ wch: 9 }, { wch: 10 }, { wch: 16 }, { wch: 90 }, { wch: 12 }]
-    const roomColumn = definition.name === '本科生' ? 5 : definition.name === '研究生' ? 3 : null
+    const roomColumn = definition.name === '本科生-按苑区' ? 6 : definition.name === '本科生' ? 5 : definition.name === '研究生' ? 3 : null
     styleAllocationWorksheet(worksheet, 1, XLSX, roomColumn)
     XLSX.utils.book_append_sheet(workbook, worksheet, definition.name)
   })
@@ -733,13 +768,46 @@ onMounted(() => {
     >
       <div class="allocation-preview-toolbar">
         <div class="allocation-preview-summary">
-          <strong>{{ allocationPreview.totalBeds }}</strong>
-          <span>实际分配人数</span>
+          <strong>{{ activePreviewTotalBeds }}</strong>
+          <span>{{ previewViewMode === 'zone' ? '本科生分配人数' : '实际分配人数' }}</span>
         </div>
+        <el-radio-group v-model="previewViewMode" class="allocation-preview-view-switch" size="small" aria-label="预览表格视图">
+          <el-radio-button label="college">按学院</el-radio-button>
+          <el-radio-button label="zone">本科生按苑区</el-radio-button>
+        </el-radio-group>
         <el-button type="primary" plain :icon="Download" @click="exportAllocationPreview">导出 Excel</el-button>
       </div>
 
-      <div v-if="allocationPreview.mode === 'south-kang'" class="allocation-preview-section">
+      <template v-if="previewViewMode === 'zone'">
+        <div class="allocation-preview-section">
+          <div class="allocation-preview-section__heading">
+            <h3>本科生按苑区</h3>
+            <span>仅显示已产生本科生分配的苑区</span>
+          </div>
+          <div v-if="allocationPreview.undergraduateByZone.length" class="allocation-preview-table-wrap">
+            <table class="allocation-preview-table allocation-preview-table--detail allocation-preview-table--zone">
+              <thead><tr><th rowspan="2">苑区</th><th rowspan="2">人数</th><th colspan="2">按性别统计</th><th rowspan="2">楼栋</th><th rowspan="2">学院</th><th rowspan="2">房间号</th><th rowspan="2">备注</th></tr><tr><th>性别</th><th>人数</th></tr></thead>
+              <tbody>
+                <template v-for="zone in allocationPreview.undergraduateByZone" :key="zone.zoneName">
+                  <template v-for="gender in zone.genders" :key="`${zone.zoneName}-${gender.gender}`">
+                    <tr v-for="(row, rowIndex) in gender.rows" :key="`${zone.zoneName}-${gender.gender}-${row.buildingName}`">
+                      <td v-if="gender.gender === zone.genders[0].gender && rowIndex === 0" :rowspan="zone.genders.reduce((sum, item) => sum + item.rows.length, 0)" class="allocation-preview-table__group-cell">{{ zone.zoneName }}</td>
+                      <td v-if="gender.gender === zone.genders[0].gender && rowIndex === 0" :rowspan="zone.genders.reduce((sum, item) => sum + item.rows.length, 0)" class="allocation-preview-table__number-cell">{{ zone.zoneTotal }}</td>
+                      <td v-if="rowIndex === 0" :rowspan="gender.rows.length" class="allocation-preview-table__gender-cell">{{ gender.gender === 'male' ? '男' : '女' }}</td>
+                      <td v-if="rowIndex === 0" :rowspan="gender.rows.length" class="allocation-preview-table__number-cell">{{ gender.genderTotal }}</td>
+                      <td v-if="row.buildingStart" :rowspan="row.buildingRowspan">{{ row.buildingName }}</td>
+                      <td>{{ row.collegeName }}</td><td class="allocation-preview-table__rooms">{{ row.roomText }}</td><td>{{ row.remark }}</td>
+                      </tr>
+                  </template>
+                </template>
+              </tbody>
+            </table>
+          </div>
+          <el-empty v-else description="暂无本科生可预览的排寝结果" />
+        </div>
+      </template>
+
+      <div v-else-if="allocationPreview.mode === 'south-kang'" class="allocation-preview-section">
         <div class="allocation-preview-section__heading">
           <h3>南康校区</h3>
           <span>楼栋分配汇总</span>
@@ -799,7 +867,7 @@ onMounted(() => {
         </div>
       </template>
 
-      <el-empty v-if="!allocationPreview.totalBeds" description="暂无可预览的排寝结果" />
+      <el-empty v-if="previewViewMode === 'college' && !allocationPreview.totalBeds" description="暂无可预览的排寝结果" />
     </el-dialog>
   </div>
 </template>
@@ -907,6 +975,10 @@ onMounted(() => {
 .allocation-preview-summary { display: flex; align-items: baseline; gap: .45rem; color: var(--screen-muted); }
 .allocation-preview-summary strong { color: #67e8f9; font: 700 1.5rem/1 "DIN Alternate", Consolas, monospace; }
 .allocation-preview-summary span { font-size: .78rem; }
+.allocation-preview-view-switch { margin-inline: auto; }
+.allocation-preview-view-switch :deep(.el-radio-button__inner) { border-color: rgba(147, 197, 253, .3); color: #bfdbfe; background: rgba(5, 18, 38, .72); box-shadow: none; }
+.allocation-preview-view-switch :deep(.el-radio-button:first-child .el-radio-button__inner) { border-inline-start-color: rgba(147, 197, 253, .3); }
+.allocation-preview-view-switch :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) { border-color: #3b82f6; color: #fff; background: #2563eb; box-shadow: -.0625rem 0 0 0 #2563eb; }
 .allocation-preview-section { margin-block-end: 1.25rem; }
 .allocation-preview-section:last-child { margin-block-end: 0; }
 .allocation-preview-section__heading { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-block-end: .5rem; }
@@ -927,6 +999,10 @@ onMounted(() => {
 .allocation-preview-table--south td:nth-child(1) { min-width: 18rem; text-align: left; }
 .allocation-preview-table--south td:nth-child(2) { min-width: 12rem; }
 .allocation-preview-table--graduate { min-width: 54rem; }
+.allocation-preview-table--zone { min-width: 56rem; }
+.allocation-preview-table--zone td { text-align: center; }
+.allocation-preview-table--zone td:nth-child(1) { min-width: 10rem; text-align: center; }
+.allocation-preview-table--zone .allocation-preview-table__rooms { text-align: center !important; }
 .allocation-preview-dialog :deep(.el-dialog__body) { padding-block-start: .9rem; }
 :global(.parameter-dialog.el-dialog) { --screen-border: rgba(147, 197, 253, .24); --screen-text: #e8f1ff; --screen-muted: #9fb3d1; overflow: hidden; border: .0625rem solid rgba(147, 197, 253, .3); border-radius: .625rem; background: #0a1d38; box-shadow: 0 1.5rem 4rem rgba(2, 8, 23, .5); }
 :global(.parameter-dialog .el-dialog__header) { margin-right: 0; padding: 1rem 1.25rem; border-bottom: .0625rem solid var(--screen-border); background: rgba(8, 28, 55, .94); }
@@ -957,6 +1033,7 @@ onMounted(() => {
   :global(.parameter-dialog.el-dialog) { width: calc(100vw - 1rem) !important; margin: .5rem auto; }
   :global(.parameter-dialog .el-dialog__body) { max-height: calc(100dvh - 8rem); padding: .75rem; }
   .allocation-preview-toolbar, .allocation-preview-section__heading { align-items: flex-start; flex-direction: column; }
+  .allocation-preview-view-switch { margin-inline: 0; }
   .allocation-preview-table-wrap { max-height: 48vh; }
 }
 </style>
