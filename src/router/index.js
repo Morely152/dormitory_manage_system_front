@@ -18,6 +18,7 @@ const implementedComponents = {
   'room-management': () => import('@/views/RoomManagementView.vue'),
   'operation-log': () => import('@/views/OperationLogView.vue'),
   'bed-allocation': () => import('@/views/BedAllocationView.vue'),
+  'repair-application': () => import('@/views/RepairApplicationView.vue'),
 }
 
 const businessRoutes = ACCESS_MODULES.map((module) => ({
