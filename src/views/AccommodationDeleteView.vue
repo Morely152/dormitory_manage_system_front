@@ -519,7 +519,7 @@ async function handleDelete() {
       </el-table>
 
       <div class="accommodation-delete-page__pagination">
-        <el-pagination v-model:current-page="pagination.currentPage" v-model:page-size="pagination.pageSize" :page-sizes="[50, 100, 200]" :total="pagination.total" background layout="total, sizes, prev, pager, next, jumper" @size-change="pagination.currentPage = 1" />
+        <el-pagination v-model:current-page="pagination.currentPage" v-model:page-size="pagination.pageSize" :page-sizes="[50, 100, 200,10000]" :total="pagination.total" background layout="total, sizes, prev, pager, next, jumper" @size-change="pagination.currentPage = 1" />
       </div>
     </section>
   </div>

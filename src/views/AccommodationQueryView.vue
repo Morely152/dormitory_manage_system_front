@@ -942,10 +942,36 @@ function sortLabels(labels) {
   return [...labels].sort((itemA, itemB) => itemA.localeCompare(itemB, 'zh-CN', { numeric: true }))
 }
 
-function getRoomColumnCode(roomCode) {
+function getRoomColumnCode(roomCode, floor) {
   const value = String(roomCode ?? '').trim()
-  const numericPart = value.match(/\d+$/)?.[0]
-  return numericPart?.length > 1 ? numericPart.slice(1) : value
+  const numericPart = value.match(/\d+$/)?.[0] || value
+  const floorStr = String(floor ?? '').trim()
+  const normalizedFloor = floorStr && floorStr !== '-' ? floorStr : ''
+
+  // 特殊房间 A：0 + 楼层号(1-9) + 序号（如 011=1层1号、021=2层1号、051=5层1号）。
+  // 用 "!" 前缀确保在 numeric 排序下也排在普通房间（01、02...）之前，
+  // "!" 的 ASCII 码(33)小于数字字符(48-57)。
+  if (/^0[1-9]/.test(numericPart) && numericPart.length > 2) {
+    const roomSeq = numericPart.slice(2)
+    return `!${roomSeq.padStart(2, '0')}`
+  }
+
+  // 特殊房间 B：楼层(1位) + 3位编号（如 8101=8层、8102=8层）。
+  // 取后两位作为序号，与 A 类特殊房间列号统一（都为 !0X），使不同楼层上下对齐。
+  if (numericPart.length === 4 && !numericPart.startsWith('0')
+      && normalizedFloor && normalizedFloor.length === 1
+      && numericPart.startsWith(normalizedFloor)) {
+    const roomSeq = numericPart.slice(2)
+    return `!${roomSeq.padStart(2, '0')}`
+  }
+
+  // 普通房间：用 floor 字段去掉楼层号前缀（如 101 去掉 "1" → "01"）。
+  if (normalizedFloor && numericPart.startsWith(normalizedFloor)) {
+    return numericPart.slice(normalizedFloor.length)
+  }
+
+  // 回退：去掉首位楼层号。
+  return numericPart.length > 1 ? numericPart.slice(1) : value
 }
 
 function buildRoomHeatmap(rows, buildingId) {
@@ -953,10 +979,10 @@ function buildRoomHeatmap(rows, buildingId) {
 
   const items = buildRoomStatistics(rows.filter((row) => getBuildingKey(row) === buildingId))
   const floors = sortLabels([...new Set(items.map((item) => item.floor))])
-  const roomCodes = sortLabels([...new Set(items.map((item) => getRoomColumnCode(item.roomCode)))])
+  const roomCodes = sortLabels([...new Set(items.map((item) => getRoomColumnCode(item.roomCode, item.floor)))])
   const data = items.map((room) => {
     const state = room.occupied === 0 ? 0 : (room.occupied >= room.total ? 2 : 1)
-    return [roomCodes.indexOf(getRoomColumnCode(room.roomCode)), floors.indexOf(room.floor), state, room.occupied, room.total, room.roomCode, room.floor, room.key, room.hasGraduateStudent]
+    return [roomCodes.indexOf(getRoomColumnCode(room.roomCode, room.floor)), floors.indexOf(room.floor), state, room.occupied, room.total, room.roomCode, room.floor, room.key, room.hasGraduateStudent]
   })
 
   return { floors, roomCodes, data }
@@ -988,9 +1014,10 @@ function buildGraduateRoomOutlineData(heatmapData, columnCount, floorCount) {
 }
 
 function getHeatmapRoomPosition(data) {
-  const roomDigits = String(data[5] ?? '').match(/\d+$/)?.[0] || ''
-  const floorNo = roomDigits.length >= 2 ? Number(roomDigits[0]) : Number(data[6])
-  const roomNo = roomDigits.length >= 2 ? roomDigits.slice(1) : String(data[0]).padStart(2, '0')
+  // 优先使用数据中的真实楼层，避免 011 等特殊房间号首位为 0 导致楼层解析错误。
+  const floorNo = Number(data[6])
+  // 用列索引作为房间列标识，保证同列不同楼层的房间能正确匹配上下相邻关系。
+  const roomNo = String(data[0])
   return {
     floorNo,
     roomNo,
