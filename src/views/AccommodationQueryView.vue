@@ -149,6 +149,10 @@ const dashboardSummary = computed(() => {
   const emptyRooms = rooms.filter((room) => room.occupied === 0)
   const emptyRoomCount = emptyRooms.length
   const emptyRoomBeds = emptyRooms.reduce((total, room) => total + room.total, 0)
+  // 可插空房间：已住但未住满，仍可继续插入新生的房间
+  const partialRooms = rooms.filter((room) => room.occupied > 0 && room.occupied < room.total)
+  const partialRoomCount = partialRooms.length
+  const partialRoomBeds = partialRooms.reduce((total, room) => total + (room.total - room.occupied), 0)
 
   return {
     totalBeds,
@@ -159,6 +163,8 @@ const dashboardSummary = computed(() => {
     roomCount: rooms.length,
     emptyRoomCount,
     emptyRoomBeds,
+    partialRoomCount,
+    partialRoomBeds,
   }
 })
 
@@ -2050,16 +2056,22 @@ async function handleBuildingChange(buildingId) {
             </div>
           </article>
           <article class="dashboard-metric dashboard-metric--empty-room">
-            <span>全空房间数</span>
+            <span>全空房间数 / 床位数</span>
             <div class="dashboard-metric-value">
               <strong>{{ formatNumber(dashboardSummary.emptyRoomCount) }}</strong>
               <small>间</small>
+              <em class="dashboard-metric-sep">/</em>
+              <strong>{{ formatNumber(dashboardSummary.emptyRoomBeds) }}</strong>
+              <small>张</small>
             </div>
           </article>
-          <article class="dashboard-metric dashboard-metric--empty-room-beds">
-            <span>全空房间床位数</span>
+          <article class="dashboard-metric dashboard-metric--partial-room">
+            <span>可插空房间数 / 床位数</span>
             <div class="dashboard-metric-value">
-              <strong>{{ formatNumber(dashboardSummary.emptyRoomBeds) }}</strong>
+              <strong>{{ formatNumber(dashboardSummary.partialRoomCount) }}</strong>
+              <small>间</small>
+              <em class="dashboard-metric-sep">/</em>
+              <strong>{{ formatNumber(dashboardSummary.partialRoomBeds) }}</strong>
               <small>张</small>
             </div>
           </article>
@@ -2615,9 +2627,24 @@ async function handleBuildingChange(buildingId) {
   color: #a5b4fc;
 }
 
-.dashboard-metric--empty-room strong,
-.dashboard-metric--empty-room-beds strong {
+.dashboard-metric--empty-room strong {
   color: #36d399;
+}
+
+.dashboard-metric--partial-room strong {
+  color: #fbbf24;
+}
+
+.dashboard-metric-sep {
+  font-style: normal;
+  color: var(--dashboard-muted);
+  font-size: 16px;
+  margin: 0 2px;
+}
+
+.dashboard-metric--empty-room strong,
+.dashboard-metric--partial-room strong {
+  font-size: 22px;
 }
 
 .dashboard-charts {
