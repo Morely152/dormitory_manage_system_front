@@ -163,7 +163,7 @@ export const ACCESS_MODULES = Object.freeze([
     workspaceOrder: 3,
     icon: 'DocumentChecked',
     operation: 'query',
-    roles: [ROLE_KEYS.SYSTEM_ADMIN, ROLE_KEYS.DORMITORY_ADMIN],
+    roles: [ROLE_KEYS.SYSTEM_ADMIN, ROLE_KEYS.DORMITORY_ADMIN, ROLE_KEYS.ZONE_MANAGER, ROLE_KEYS.ZONE_ADMIN],
   },
   {
     id: 'change-review',

@@ -7,3 +7,7 @@ export function getOperationLogs(params) {
 export function getAccommodationChangeRecords(params) {
   return http.get('/accommodations/change-records', { params })
 }
+
+export function getAccommodationChangeRecordTypes() {
+  return http.get('/accommodations/change-records/types')
+}
