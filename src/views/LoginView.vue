@@ -41,6 +41,8 @@ async function submit() {
     const valid = await formRef.value.validate().catch(() => false)
     if (!valid) return
 
+    auth.logout()
+
     const response = await loginApi({
       userCode: form.userCode,
       password: form.password,

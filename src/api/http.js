@@ -8,6 +8,10 @@ const http = axios.create({
 })
 
 http.interceptors.request.use((config) => {
+  if (config.url === '/auth/login') {
+    return config
+  }
+
   try {
     const session = JSON.parse(localStorage.getItem(AUTH_STORAGE_KEY))
     if (session?.token) {
