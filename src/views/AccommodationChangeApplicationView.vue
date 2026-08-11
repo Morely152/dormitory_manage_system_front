@@ -1,6 +1,6 @@
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
-import { Check, DocumentChecked, House, InfoFilled, Refresh, Search, UserFilled } from '@element-plus/icons-vue'
+import { Check, DocumentChecked, Edit, House, InfoFilled, Refresh, Search, UserFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   getChangeBuildings,
@@ -11,6 +11,7 @@ import {
   getChangeRooms,
   getChangeZones,
   queryStudentForChange,
+  submitBasicInfoChange,
   submitDormitoryChangeApplication,
   submitMajorChange,
 } from '@/api/accommodationChangeApplication'
@@ -28,14 +29,16 @@ const props = defineProps({
 
 const emit = defineEmits(['updated'])
 
-const activeProcess = ref('major')
+const activeProcess = ref('basic')
 const studentNo = ref('')
 const student = ref(null)
 const queryLoading = ref(false)
 const transferFormRef = ref()
 const dormitoryFormRef = ref()
+const basicFormRef = ref()
 const transferSubmitting = ref(false)
 const dormitorySubmitting = ref(false)
+const basicSubmitting = ref(false)
 const colleges = ref([])
 const counselors = ref([])
 const campuses = ref([])
@@ -48,6 +51,7 @@ const applicationResult = ref(null)
 
 const transferForm = reactive(createTransferForm())
 const dormitoryForm = reactive(createDormitoryForm())
+const basicForm = reactive(createBasicForm())
 
 const selectedCounselor = computed(() => counselors.value.find(
   (item) => item.id === transferForm.counselorId,
@@ -65,6 +69,13 @@ const transferRules = {
   className: [{ required: true, message: '请填写转入班级', trigger: 'blur' }],
   classTeacherName: [{ required: true, message: '请填写班主任姓名', trigger: 'blur' }],
   classTeacherPhone: [{ required: true, message: '请填写班主任电话', trigger: 'blur' }],
+}
+
+const basicRules = {
+  studentNo: [{ required: true, message: '请输入学号', trigger: 'blur' }],
+  studentName: [{ required: true, message: '请输入姓名', trigger: 'blur' }],
+  genderName: [{ required: true, message: '请选择性别', trigger: 'change' }],
+  gradeYear: [{ required: true, message: '请输入年级', trigger: 'blur' }],
 }
 
 const dormitoryRules = {
@@ -111,6 +122,7 @@ async function queryStudent() {
     await Promise.all([loadColleges(), loadCampuses()])
     await resetTransferForm()
     resetDormitoryForm()
+    resetBasicForm()
     ElMessage.success(`已查询到 ${data.studentName} 的信息`)
   } catch (error) {
     ElMessage.error(error.message || '学生信息查询失败')
@@ -138,6 +150,16 @@ function createDormitoryForm() {
     roomId: '',
     bedId: '',
     reason: '',
+  }
+}
+
+function createBasicForm() {
+  return {
+    studentNo: '',
+    studentName: '',
+    genderName: '',
+    gradeYear: null,
+    mobile: '',
   }
 }
 
@@ -179,6 +201,18 @@ function resetDormitoryForm() {
   rooms.value = []
   roomBeds.value = []
   dormitoryFormRef.value?.clearValidate()
+}
+
+function resetBasicForm() {
+  if (!student.value) return
+  Object.assign(basicForm, {
+    studentNo: student.value.studentNo || '',
+    studentName: student.value.studentName || '',
+    genderName: student.value.genderName || '',
+    gradeYear: student.value.gradeYear || null,
+    mobile: student.value.mobile || '',
+  })
+  basicFormRef.value?.clearValidate()
 }
 
 async function handleCollegeChange() {
@@ -267,6 +301,36 @@ async function submitTransferChange() {
   }
 }
 
+async function submitBasicChange() {
+  const valid = await basicFormRef.value.validate().catch(() => false)
+  if (!valid || basicSubmitting.value) return
+
+  basicSubmitting.value = true
+  try {
+    const result = await submitBasicInfoChange({
+      studentId: student.value.id,
+      studentNo: basicForm.studentNo.trim(),
+      studentName: basicForm.studentName.trim(),
+      genderName: basicForm.genderName,
+      gradeYear: Number(basicForm.gradeYear) || null,
+      mobile: basicForm.mobile.trim() || null,
+    })
+    Object.assign(student.value, {
+      studentNo: basicForm.studentNo.trim(),
+      studentName: basicForm.studentName.trim(),
+      genderName: basicForm.genderName,
+      gradeYear: Number(basicForm.gradeYear) || null,
+      mobile: basicForm.mobile.trim(),
+    })
+    emit('updated')
+    ElMessage.success(result.message)
+  } catch (error) {
+    ElMessage.error(error.message || '学生基本信息修改失败')
+  } finally {
+    basicSubmitting.value = false
+  }
+}
+
 function studentLabel(person) {
   return `${person.studentName}（${person.studentNo}）`
 }
@@ -324,7 +388,7 @@ async function submitDormitoryChange() {
       <div>
         <p>申请处理</p>
         <h1>学生信息修改</h1>
-        <span>按学号查询学生后，可办理转专业信息修改或寝室变更修改。</span>
+        <span>按学号查询学生后，可办理基本信息修改、转专业信息修改或寝室变更修改。</span>
       </div>
     </header>
 
@@ -358,6 +422,18 @@ async function submitDormitoryChange() {
       </div>
       <dl class="student-facts">
         <div>
+          <dt>性别</dt>
+          <dd>{{ student.genderName || '—' }}</dd>
+        </div>
+        <div>
+          <dt>年级</dt>
+          <dd>{{ student.gradeYear || '—' }}</dd>
+        </div>
+        <div>
+          <dt>手机号</dt>
+          <dd>{{ student.mobile || '—' }}</dd>
+        </div>
+        <div>
           <dt>当前专业</dt>
           <dd>{{ student.majorName }}</dd>
         </div>
@@ -383,6 +459,40 @@ async function submitDormitoryChange() {
 
     <section v-if="student" class="process-card" aria-label="选择修改业务">
       <el-tabs v-model="activeProcess" stretch>
+        <el-tab-pane name="basic">
+          <template #label><span class="tab-label"><el-icon>
+                <Edit />
+              </el-icon>基本信息修改</span></template>
+          <div class="process-intro">
+            <div>
+              <h2>基本信息修改</h2>
+              <p>修改学生学号、姓名、性别、年级和手机号等基础资料。提交后直接生效，系统会自动记录操作日志。</p>
+            </div>
+            <el-tag type="success" effect="light">即时修改</el-tag>
+          </div>
+          <el-form ref="basicFormRef" :model="basicForm" :rules="basicRules" label-position="top"
+            class="change-form" @submit.prevent="submitBasicChange">
+            <div class="form-grid form-grid--three">
+              <el-form-item label="学号" prop="studentNo"><el-input v-model.trim="basicForm.studentNo"
+                  placeholder="请输入学号" /></el-form-item>
+              <el-form-item label="姓名" prop="studentName"><el-input v-model.trim="basicForm.studentName"
+                  placeholder="请输入姓名" /></el-form-item>
+              <el-form-item label="性别" prop="genderName">
+                <el-select v-model="basicForm.genderName" placeholder="请选择性别">
+                  <el-option label="男" value="男" />
+                  <el-option label="女" value="女" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="年级" prop="gradeYear"><el-input-number v-model="basicForm.gradeYear"
+                  :min="1900" :max="2200" controls-position="right" placeholder="请输入年级" /></el-form-item>
+              <el-form-item label="手机号" prop="mobile"><el-input v-model.trim="basicForm.mobile"
+                  placeholder="请输入手机号（可选）" maxlength="32" /></el-form-item>
+            </div>
+            <div class="form-actions"><el-button type="primary" native-type="submit" :icon="Check"
+                :loading="basicSubmitting">确认修改基本信息</el-button></div>
+          </el-form>
+        </el-tab-pane>
+
         <el-tab-pane name="major">
           <template #label><span class="tab-label"><el-icon>
                 <UserFilled />
@@ -704,7 +814,8 @@ async function submitDormitoryChange() {
   font-size: 20px;
 }
 
-.change-form :deep(.el-select) {
+.change-form :deep(.el-select),
+.change-form :deep(.el-input-number) {
   width: 100%;
 }
 
