@@ -3,7 +3,6 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 import { ArrowLeft, DataAnalysis, DocumentAdd, Download, EditPen, List } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import html2canvas from 'html2canvas'
-import * as XLSX from 'xlsx'
 import { ElMessage } from 'element-plus'
 import { getCollegeOptions } from '@/api/accommodationImport'
 import { getBeds } from '@/api/beds'
@@ -38,6 +37,7 @@ const drilledCampusId = ref('')
 const drilledZoneId = ref('')
 const roomDetailVisible = ref(false)
 const selectedHeatmapRoom = ref(null)
+const heatmapHoverTooltip = ref({ visible: false, title: '', detail: '', allocation: '', left: 0, top: 0 })
 const changeApplicationVisible = ref(false)
 const selectedStudentNo = ref('')
 const accommodationImportVisible = ref(false)
@@ -276,6 +276,7 @@ let studentSearchTimer
 let leftChartWheelHandler
 const buildingHeatmapChartRefs = new Map()
 const buildingHeatmapCharts = new Map()
+let heatmapHoverTooltipTimer
 
 onMounted(async () => {
   loadCollegeOptions()
@@ -294,11 +295,13 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   clearTimeout(studentSearchTimer)
+  clearHeatmapHoverTooltip()
   chartResizeObserver?.disconnect()
   disposeCharts()
 })
 
 watch(displayMode, async (mode) => {
+  clearHeatmapHoverTooltip()
   if (mode === 'table') {
     chartResizeObserver?.disconnect()
     disposeCharts()
@@ -1035,6 +1038,36 @@ function getHeatmapDataValues(params) {
   return Array.isArray(params.data) ? params.data : params.data?.value ?? params.value
 }
 
+function clearHeatmapHoverTooltip() {
+  clearTimeout(heatmapHoverTooltipTimer)
+  heatmapHoverTooltip.value.visible = false
+}
+
+function describeHeatmapHoverTooltip(params) {
+  const [, , , occupied, total, roomCode, floor, , hasGraduateStudent] = getHeatmapDataValues(params)
+  return {
+    title: `${floor} 层 · ${roomCode} 寝室`,
+    detail: `入住人数 / 床位数：${occupied} / ${total}`,
+    allocation: hasGraduateStudent ? '研究生寝室' : '',
+  }
+}
+
+function scheduleHeatmapHoverTooltip(params) {
+  if (params?.seriesType !== 'heatmap') return
+
+  clearHeatmapHoverTooltip()
+  const sourceEvent = params.event?.event || params.event || {}
+  const pointerX = Number(sourceEvent.clientX ?? sourceEvent.pageX ?? 0)
+  const pointerY = Number(sourceEvent.clientY ?? sourceEvent.pageY ?? 0)
+  const left = Math.min(Math.max(8, pointerX + 18), Math.max(8, window.innerWidth - 244))
+  const top = Math.min(Math.max(8, pointerY + 18), Math.max(8, window.innerHeight - 96))
+  const detail = describeHeatmapHoverTooltip(params)
+
+  heatmapHoverTooltipTimer = setTimeout(() => {
+    heatmapHoverTooltip.value = { visible: true, ...detail, left, top }
+  }, 500)
+}
+
 function renderGraduateRoomOutline(params, api) {
   const [centerX, centerY] = api.coord([api.value(0), api.value(1)])
   const cellWidth = Math.abs(params.coordSys.width / api.value(6))
@@ -1383,30 +1416,22 @@ function renderBuildingHeatmaps() {
       const chart = getOrCreateChart(buildingHeatmapCharts.get(building.id), chartElement)
       buildingHeatmapCharts.set(building.id, chart)
       chart?.off('click')
+      chart?.off('mouseover')
+      chart?.off('mouseout')
+      chart?.off('globalout')
       chart?.on('click', (params) => {
         if (params.seriesType !== 'heatmap' || !params.data) return
         const [, , , , , roomCode, floor, key] = getHeatmapDataValues(params)
         selectedHeatmapRoom.value = { key, roomCode, floor }
         roomDetailVisible.value = true
       })
+      chart?.on('mouseover', scheduleHeatmapHoverTooltip)
+      chart?.on('mouseout', clearHeatmapHoverTooltip)
+      chart?.on('globalout', clearHeatmapHoverTooltip)
       chart?.setOption({
         animationDuration: 300,
         aria: { enabled: true, description: `${subZone.name}${building.name}寝室状态热力图` },
-        tooltip: {
-          show: true,
-          position: 'top',
-          confine: true,
-          padding: [4, 6],
-          backgroundColor: 'rgba(5, 18, 38, 0.94)',
-          borderColor: 'rgba(147, 197, 253, 0.34)',
-          borderWidth: 1,
-          textStyle: { color: DASHBOARD_COLORS.text, fontFamily: DASHBOARD_FONT, fontSize: 11, lineHeight: 16 },
-          formatter: (params) => {
-            const [, , , occupied, total, roomCode, floor] = getHeatmapDataValues(params)
-            if (compactMode) return `${roomCode}房间：${occupied}/${total}`
-            return `楼层：${floor}<br/>寝室：${roomCode}<br/>入住人数 / 床位数：${occupied} / ${total}`
-          },
-        },
+        tooltip: { show: false },
         graphic: hasHeatmapData ? [] : [{
           type: 'text',
           left: 'center',
@@ -1566,6 +1591,54 @@ const EXCEL_COLUMNS = [
   { label: '辅导员电话', key: 'counselorPhone', width: 18 },
 ]
 
+function buildBedTableSheetRows(rows) {
+  const headers = EXCEL_COLUMNS.map((column) => column.label)
+  const dataRows = rows.map((row, rowIndex) => EXCEL_COLUMNS.map((column) => (
+    column.key === 'dormitoryNo' && getDormitoryRowSpan(rows, rowIndex) === 0
+      ? ''
+      : column.key === 'dormitoryNo' || String(row[column.key] ?? '').trim() !== '-'
+        ? row[column.key]
+        : ''
+  )))
+  return [headers, ...dataRows]
+}
+
+function styleBedTableWorksheet(worksheet, spreadsheet) {
+  const range = spreadsheet.utils.decode_range(worksheet['!ref'] || 'A1:A1')
+  const border = {
+    top: { style: 'thin', color: { rgb: 'B7C7D9' } },
+    bottom: { style: 'thin', color: { rgb: 'B7C7D9' } },
+    left: { style: 'thin', color: { rgb: 'B7C7D9' } },
+    right: { style: 'thin', color: { rgb: 'B7C7D9' } },
+  }
+  const alignment = { horizontal: 'center', vertical: 'center', wrapText: true }
+
+  for (let rowIndex = range.s.r; rowIndex <= range.e.r; rowIndex += 1) {
+    for (let columnIndex = range.s.c; columnIndex <= range.e.c; columnIndex += 1) {
+      const cellAddress = spreadsheet.utils.encode_cell({ r: rowIndex, c: columnIndex })
+      const cell = worksheet[cellAddress] || { t: 's', v: '' }
+      const isHeader = rowIndex === 0
+      worksheet[cellAddress] = {
+        ...cell,
+        s: {
+          alignment,
+          border,
+          font: isHeader
+            ? { name: 'Microsoft YaHei', sz: 10, bold: true, color: { rgb: '173A66' } }
+            : { name: 'Microsoft YaHei', sz: 10, color: { rgb: '1F2937' } },
+          fill: {
+            patternType: 'solid',
+            fgColor: { rgb: isHeader ? 'DCEBFA' : 'FFFFFF' },
+          },
+        },
+      }
+    }
+  }
+
+  worksheet['!rows'] = Array.from({ length: range.e.r + 1 }, (_, rowIndex) => ({ hpt: rowIndex === 0 ? 28 : 26 }))
+  worksheet['!freeze'] = { xSplit: 0, ySplit: 1 }
+}
+
 async function exportBedTable() {
   if (exportingExcel.value) return
 
@@ -1584,24 +1657,12 @@ async function exportBedTable() {
       return
     }
 
-    const headers = EXCEL_COLUMNS.map((column) => column.label)
-    const exportRows = rows.map((row, rowIndex) => EXCEL_COLUMNS.reduce((record, column) => {
-      record[column.label] = column.key === 'dormitoryNo' && getDormitoryRowSpan(rows, rowIndex) === 0
-        ? ''
-        : row[column.key]
-      return record
-    }, {}))
-    const worksheet = XLSX.utils.json_to_sheet(exportRows, { header: headers })
+    const spreadsheet = await import('xlsx-js-style')
+    const XLSX = spreadsheet.default || spreadsheet
+    const worksheet = XLSX.utils.aoa_to_sheet(buildBedTableSheetRows(rows))
     worksheet['!cols'] = EXCEL_COLUMNS.map((column) => ({ wch: column.width }))
     worksheet['!merges'] = getDormitoryCellMerges(rows)
-    const cellAlignment = { horizontal: 'center', vertical: 'center' }
-    Object.keys(worksheet).forEach((cellAddress) => {
-      if (cellAddress.startsWith('!')) return
-      worksheet[cellAddress].s = {
-        ...(worksheet[cellAddress].s || {}),
-        alignment: cellAlignment,
-      }
-    })
+    styleBedTableWorksheet(worksheet, XLSX)
 
     const workbook = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(workbook, worksheet, '床位统计表')
@@ -2154,6 +2215,17 @@ async function handleBuildingChange(buildingId) {
         </div>
       </div>
     </section>
+
+    <div
+      v-if="heatmapHoverTooltip.visible"
+      class="heatmap-hover-tooltip"
+      :style="{ left: `${heatmapHoverTooltip.left}px`, top: `${heatmapHoverTooltip.top}px` }"
+      role="tooltip"
+    >
+      <strong>{{ heatmapHoverTooltip.title }}</strong>
+      <span>{{ heatmapHoverTooltip.detail }}</span>
+      <small v-if="heatmapHoverTooltip.allocation">{{ heatmapHoverTooltip.allocation }}</small>
+    </div>
 
     <el-dialog
       v-model="roomDetailVisible"
@@ -2763,6 +2835,37 @@ async function handleBuildingChange(buildingId) {
   border: 1px solid #FFFFFF;
   background: rgba(34, 211, 238, 0.28);
   box-shadow: 0 0 6px rgba(34, 211, 238, 0.8);
+}
+
+.heatmap-hover-tooltip {
+  position: fixed;
+  z-index: 3000;
+  display: grid;
+  max-width: 220px;
+  gap: 2px;
+  padding: 5px 8px;
+  border: 1px solid rgba(147, 197, 253, 0.34);
+  border-radius: 4px;
+  color: #e8f1ff;
+  background: rgba(5, 18, 38, 0.96);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+  font-size: 10px;
+  line-height: 14px;
+  pointer-events: none;
+}
+
+.heatmap-hover-tooltip strong {
+  color: #ffffff;
+  font-size: 11px;
+}
+
+.heatmap-hover-tooltip span {
+  color: #c7d6ee;
+}
+
+.heatmap-hover-tooltip small {
+  color: #93c5fd;
+  font-size: 10px;
 }
 
 .zone-heatmap-grid {
