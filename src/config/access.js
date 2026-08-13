@@ -195,7 +195,7 @@ export const ACCESS_MODULES = Object.freeze([
     workspaceOrder: 1,
     icon: 'Edit',
     operation: 'edit',
-    roles: [ROLE_KEYS.SYSTEM_ADMIN, ROLE_KEYS.DORMITORY_ADMIN, ROLE_KEYS.COUNSELOR],
+    roles: [ROLE_KEYS.SYSTEM_ADMIN, ROLE_KEYS.DORMITORY_ADMIN, ROLE_KEYS.ZONE_MANAGER, ROLE_KEYS.ZONE_ADMIN, ROLE_KEYS.COUNSELOR],
   },
   /* Disabled pages retained for future restoration.
   {
