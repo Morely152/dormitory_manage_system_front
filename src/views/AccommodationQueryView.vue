@@ -18,6 +18,10 @@ const displayMode = ref('chart')
 // 空床位楼栋图的排序模式：默认按空床位数量从高到低排列。
 const emptyBedSortMode = ref('count')
 const collegeOptions = ref([])
+// 学院 id -> 名称映射，用于按当前用户 college_id 锁定学院筛选
+const collegeIdNameMap = ref(new Map())
+// 当前用户绑定了学院时，学院筛选框锁定为该学院且不可改
+const lockedCollegeName = ref('')
 const campusOptions = ref([])
 const zoneOptions = ref([])
 const buildingOptions = ref([])
@@ -1821,14 +1825,29 @@ async function loadCollegeOptions() {
     const rows = unwrapResponse(await getCollegeOptions(), '学院列表加载失败')
     if (!Array.isArray(rows)) throw new Error('学院列表响应格式不正确')
 
+    const nameMap = new Map()
     collegeOptions.value = [...new Set(
       rows
         .map((row) => {
           if (typeof row === 'string' || typeof row === 'number') return String(row).trim()
-          return String(firstDefined(row, ['collegeName', 'name', 'label', 'value']) ?? '').trim()
+          const id = firstDefined(row, ['id', 'collegeId', 'value'])
+          const name = String(firstDefined(row, ['collegeName', 'name', 'label', 'value']) ?? '').trim()
+          if (id !== undefined && id !== null && name) nameMap.set(String(id), name)
+          return name
         })
         .filter(Boolean),
     )].sort((nameA, nameB) => nameA.localeCompare(nameB, 'zh-CN', { numeric: true }))
+    collegeIdNameMap.value = nameMap
+
+    // 登录用户绑定了学院时，把学院筛选框锁定为该学院
+    const userCollegeId = auth.currentUser.value?.collegeId
+    if (userCollegeId) {
+      const matchedName = nameMap.get(String(userCollegeId))
+      if (matchedName) {
+        lockedCollegeName.value = matchedName
+        filters.college = matchedName
+      }
+    }
   } catch (error) {
     ElMessage.error(await requestErrorMessage(error, '学院列表加载失败'))
   } finally {
@@ -1964,10 +1983,11 @@ async function handleBuildingChange(buildingId) {
         <span>学院</span>
         <el-select
           v-model="filters.college"
-          clearable
+          :clearable="!lockedCollegeName"
+          :disabled="!!lockedCollegeName"
           filterable
           :loading="loading.colleges"
-          placeholder="全部学院"
+          :placeholder="lockedCollegeName || '全部学院'"
         >
           <el-option v-for="college in collegeOptions" :key="college" :label="college" :value="college" />
         </el-select>
