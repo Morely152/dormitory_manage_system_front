@@ -84,7 +84,8 @@ const BED_STATUS_OPTIONS = [
   { label: '空床位', value: 'AVAILABLE' },
   { label: '已入住', value: 'OCCUPIED' },
   { label: '全空床位', value: 'EMPTY_ROOM' },
-  { label: '可插空床位', value: 'PARTIAL_ROOM' },
+  { label: '可插空床位（本科生）', value: 'PARTIAL_ROOM_UNDERGRADUATE' },
+  { label: '可插空床位（研究生）', value: 'PARTIAL_ROOM_GRADUATE' },
   // { label: '不可用床位', value: 'UNAVAILABLE' },
 ]
 
@@ -94,11 +95,22 @@ const BED_STATUS_LABELS = Object.freeze({
   OCCUPIED: '已入住',
   EMPTY_ROOM: '全空床位',
   PARTIAL_ROOM: '可插空床位',
+  PARTIAL_ROOM_UNDERGRADUATE: '可插空床位（本科生）',
+  PARTIAL_ROOM_GRADUATE: '可插空床位（研究生）',
   UNAVAILABLE: '不可用床位',
 })
 
-// 空床位类筛选模式：空床位、全空床位、可插空床位均以空床位维度绘制左侧分布图
-const EMPTY_BED_CHART_STATUSES = Object.freeze(['AVAILABLE', 'EMPTY_ROOM', 'PARTIAL_ROOM'])
+const PARTIAL_ROOM_STUDENT_TYPE_STATUSES = Object.freeze([
+  'PARTIAL_ROOM_UNDERGRADUATE',
+  'PARTIAL_ROOM_GRADUATE',
+])
+
+// 空床位类筛选模式：空床位、全空床位和两类可插空床位均以空床位维度绘制左侧分布图
+const EMPTY_BED_CHART_STATUSES = Object.freeze([
+  'AVAILABLE',
+  'EMPTY_ROOM',
+  ...PARTIAL_ROOM_STUDENT_TYPE_STATUSES,
+])
 const isEmptyBedChartMode = computed(() => EMPTY_BED_CHART_STATUSES.includes(filters.status))
 
 const pagination = reactive({
@@ -229,7 +241,10 @@ const emptyBedLocationDistribution = computed(() => {
 const leftChartTitle = computed(() => {
   if (!isEmptyBedChartMode.value) return '各学院入住人数'
   if (filters.status === 'EMPTY_ROOM') return filters.building ? '各楼层全空床位' : '各楼栋全空床位'
-  if (filters.status === 'PARTIAL_ROOM') return filters.building ? '各楼层可插空床位' : '各楼栋可插空床位'
+  if (isPartialRoomStudentTypeStatus(filters.status)) {
+    const label = BED_STATUS_LABELS[filters.status]
+    return filters.building ? `各楼层${label}` : `各楼栋${label}`
+  }
   return filters.building ? '各楼层空床位数' : '各楼栋空床位数'
 })
 const leftChartAriaLabel = computed(() => `${leftChartTitle.value}横向条形图`)
@@ -419,6 +434,51 @@ function isAvailableBedStatus(...values) {
 function isOccupiedBed(row) {
   const values = [row.bedStatusCode, row.bedStatus]
   return values.some((value) => ['OCCUPIED', '已入住'].includes(String(value ?? '').trim().toUpperCase()))
+}
+
+function isPartialRoomStudentTypeStatus(status = filters.status) {
+  return PARTIAL_ROOM_STUDENT_TYPE_STATUSES.includes(status)
+}
+
+function isGraduateStudent(row) {
+  return isOccupiedBed(row) && String(row.studentNo ?? '').trim().startsWith('1')
+}
+
+function filterPartialRoomRowsByStudentType(rows, status = filters.status) {
+  if (!isPartialRoomStudentTypeStatus(status)) return rows
+
+  const rooms = new Map()
+  rows.forEach((row) => {
+    const roomKey = getRoomGroupKey(row)
+    if (!rooms.has(roomKey)) {
+      rooms.set(roomKey, {
+        total: 0,
+        returnedCount: 0,
+        occupied: 0,
+        hasGraduateStudent: false,
+      })
+    }
+
+    const room = rooms.get(roomKey)
+    room.total = Math.max(room.total, getRoomCapacity(row))
+    room.returnedCount += 1
+    if (isOccupiedBed(row)) room.occupied += 1
+    if (isGraduateStudent(row)) room.hasGraduateStudent = true
+  })
+
+  const shouldIncludeGraduateRooms = status === 'PARTIAL_ROOM_GRADUATE'
+  return rows.filter((row) => {
+    const room = rooms.get(getRoomGroupKey(row))
+    const total = room.total || room.returnedCount
+    const isPartialRoom = room.occupied > 0 && room.occupied < total
+    return isPartialRoom && room.hasGraduateStudent === shouldIncludeGraduateRooms
+  })
+}
+
+function matchesStudentSearch(row) {
+  if (filters.studentNo && !isSameValue(row.studentNo, filters.studentNo)) return false
+  if (filters.studentName && !String(row.studentName ?? '').trim().includes(filters.studentName)) return false
+  return true
 }
 
 function normalizeGender(value) {
@@ -714,7 +774,7 @@ function buildBedQuery(page, size, includeStudentSearch = false) {
     buildingId: filters.building || undefined,
     roomId: filters.room || undefined,
     genderCode: filters.gender || undefined,
-    status: filters.status,
+    status: isPartialRoomStudentTypeStatus() ? 'ALL' : filters.status,
   }
 
   if (includeStudentSearch) {
@@ -785,24 +845,29 @@ function waitForCachedChartLoading(loadingStartedAt) {
 async function loadBedRows() {
   const requestVersion = ++bedRequestVersion
   const college = filters.college
-  const needsCollegeFilter = Boolean(college)
+  const needsClientSideFiltering = Boolean(college) || isPartialRoomStudentTypeStatus()
   bedTableLoading.value = true
 
   try {
     const data = unwrapResponse(await getCachedBeds(
-      needsCollegeFilter ? buildBedQuery(undefined, undefined, true) : buildBedQuery(pagination.currentPage, pagination.pageSize, true),
+      needsClientSideFiltering
+        ? buildBedQuery(undefined, undefined, !isPartialRoomStudentTypeStatus())
+        : buildBedQuery(pagination.currentPage, pagination.pageSize, true),
     ), '床位列表加载失败')
     if (!Array.isArray(data?.items)) {
       throw new Error('床位分页响应格式不正确')
     }
 
     if (requestVersion !== bedRequestVersion) return
-    const rows = normalizeBedRows(data.items)
-    if (needsCollegeFilter) {
-      const collegeRows = rows.filter((row) => isSameValue(row.collegeName, college))
+    const rows = filterPartialRoomRowsByStudentType(normalizeBedRows(data.items))
+    if (needsClientSideFiltering) {
+      const filteredRows = rows.filter((row) => (
+        (!college || isSameValue(row.collegeName, college))
+        && (!isPartialRoomStudentTypeStatus() || matchesStudentSearch(row))
+      ))
       const startIndex = (pagination.currentPage - 1) * pagination.pageSize
-      bedRows.value = collegeRows.slice(startIndex, startIndex + pagination.pageSize)
-      pagination.total = collegeRows.length
+      bedRows.value = filteredRows.slice(startIndex, startIndex + pagination.pageSize)
+      pagination.total = filteredRows.length
       return
     }
 
@@ -832,7 +897,7 @@ async function loadChartRows() {
 
     if (usesCache) await waitForCachedChartLoading(loadingStartedAt)
     if (requestVersion !== chartRequestVersion) return
-    chartRows.value = normalizeBedRows(data.items)
+    chartRows.value = filterPartialRoomRowsByStudentType(normalizeBedRows(data.items))
     await nextTick()
     renderDashboardCharts()
   } catch (error) {
@@ -1618,7 +1683,7 @@ function buildBedTableSheetRows(rows) {
 
 // 全空/可插空宿舍导出：左列楼栋信息，右列寝室（可插空模式附带可插空人数）
 function buildRoomSummarySheetData(rows, status) {
-  const isPartial = status === 'PARTIAL_ROOM'
+  const isPartial = isPartialRoomStudentTypeStatus(status)
   const headers = isPartial ? ['楼栋', '寝室（可插空人数）', '原寝室学院'] : ['楼栋', '寝室']
 
   // 按楼栋分组并保持出现顺序
@@ -1749,15 +1814,16 @@ function styleBedTableWorksheet(worksheet, spreadsheet) {
 async function exportBedTable() {
   if (exportingExcel.value) return
 
-  const query = buildBedQuery(undefined, undefined, true)
+  const query = buildBedQuery(undefined, undefined, !isPartialRoomStudentTypeStatus())
   const college = filters.college
   exportingExcel.value = true
   try {
     const data = unwrapResponse(await getCachedBeds(query), '床位数据导出失败')
     if (!Array.isArray(data?.items)) throw new Error('床位查询响应格式不正确')
 
-    const rows = normalizeBedRows(data.items).filter((row) => (
-      !college || isSameValue(row.collegeName, college)
+    const rows = filterPartialRoomRowsByStudentType(normalizeBedRows(data.items)).filter((row) => (
+      (!college || isSameValue(row.collegeName, college))
+      && (!isPartialRoomStudentTypeStatus() || matchesStudentSearch(row))
     ))
     if (!rows.length) {
       ElMessage.info('当前筛选条件下没有可导出的床位数据')
@@ -1766,7 +1832,7 @@ async function exportBedTable() {
 
     const spreadsheet = await import('xlsx-js-style')
     const XLSX = spreadsheet.default || spreadsheet
-    const isRoomSummaryExport = filters.status === 'EMPTY_ROOM' || filters.status === 'PARTIAL_ROOM'
+    const isRoomSummaryExport = filters.status === 'EMPTY_ROOM' || isPartialRoomStudentTypeStatus()
 
     let worksheet
     let sheetName
@@ -1777,8 +1843,8 @@ async function exportBedTable() {
       worksheet = XLSX.utils.aoa_to_sheet([headers, ...dataRows])
       worksheet['!cols'] = [
         { wch: 28 },
-        { wch: filters.status === 'PARTIAL_ROOM' ? 26 : 16 },
-        ...(filters.status === 'PARTIAL_ROOM' ? [{ wch: 24 }] : []),
+        { wch: isPartialRoomStudentTypeStatus() ? 26 : 16 },
+        ...(isPartialRoomStudentTypeStatus() ? [{ wch: 24 }] : []),
       ]
       worksheet['!merges'] = merges
       styleBedTableWorksheet(worksheet, XLSX)
