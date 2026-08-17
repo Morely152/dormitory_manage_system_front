@@ -8,11 +8,11 @@ export function unwrapResponse(response, fallbackMessage) {
 }
 
 export function getRepairAreas() {
-  return http.get('/repair-requests/areas')
+  return http.get('/repair-submissions/areas')
 }
 
 export function getRepairIssueTypes(areaId) {
-  return http.get(`/repair-requests/areas/${areaId}/issue-types`)
+  return http.get(`/repair-submissions/areas/${areaId}/issue-types`)
 }
 
 export function createRepairArea(data) {
@@ -53,7 +53,7 @@ function requiresLegacyProblemPayload(error) {
 }
 
 export function submitRepair(payload) {
-  return http.post('/repair-requests', payload)
+  return http.post('/repair-submissions', payload)
 }
 
 export function getMyRepairRequests(params) {
@@ -122,16 +122,8 @@ export function assignRepairWorkOrder(workOrderId, data) {
   return http.put(`/repair-work-orders/${workOrderId}/assignment`, data)
 }
 
-export function getUnacceptedRepairWorkOrders(params) {
-  return http.get('/repair-work-orders/unaccepted', { params })
-}
-
 export function getMyRepairWorkOrders(params) {
   return http.get('/repair-work-orders/mine', { params })
-}
-
-export function acceptRepairWorkOrder(workOrderId) {
-  return http.post(`/repair-work-orders/${workOrderId}/accept`)
 }
 
 export function submitRepairWorkOrderResults(workOrderId, data) {
