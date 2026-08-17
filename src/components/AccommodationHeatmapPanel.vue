@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as echarts from 'echarts'
 import { ElMessage } from 'element-plus'
 import { getBeds } from '@/api/beds'
+import { buildHeatmapModel, buildOccupancyModel, normalizeOccupancyRows } from '@/features/accommodation/occupancyData'
 
 const props = defineProps({
   campusId: { type: [String, Number], default: '' },
@@ -17,6 +18,11 @@ const props = defineProps({
 const loading = ref(false)
 const errorMessage = ref('')
 const rows = ref([])
+const occupancyModel = ref(null)
+const heatmapDataModel = computed(() => buildHeatmapModel(occupancyModel.value))
+const occupancySummary = computed(() => occupancyModel.value?.totals || {
+  rooms: 0, totalBeds: 0, occupiedBeds: 0, availableBeds: 0, occupancyRate: 0,
+})
 const roomDetailVisible = ref(false)
 const selectedRoom = ref(null)
 const hoverTooltip = ref({ visible: false, title: '', detail: '', allocation: '', left: 0, top: 0 })
@@ -44,6 +50,8 @@ const FONT = '"Source Han Sans SC", "Microsoft YaHei", sans-serif'
 const NUMBER_FONT = '"DIN Alternate", "Roboto Mono", Consolas, monospace'
 const RONGJIANG_ZONE_NAMES = ['北苑', '西一区', '西二区', '南苑']
 
+defineExpose({ occupancyModel, heatmapDataModel })
+
 function firstDefined(source, fields) {
   for (const field of fields) {
     const value = source?.[field]
@@ -64,41 +72,41 @@ function unwrapResponse(response) {
 
 function isOccupiedBed(row) {
   return [row.bedStatusCode, row.bedStatus].some((value) => (
-    ['OCCUPIED', '已入住'].includes(String(value ?? '').trim().toUpperCase())
-  ))
+    ['OCCUPIED', '已入住', '入住', 'IN_USE', 'USED'].includes(String(value ?? '').trim().toUpperCase())
+  )) || Boolean(row.currentStudentId && !['-', '--', '暂无', '未知'].includes(String(row.currentStudentId).trim()))
 }
 
 function normalizeBedRows(sourceRows) {
-  return sourceRows.map((source, index) => ({
-    id: firstDefined(source, ['id', 'bedId', 'value']) ?? `bed-${index}`,
-    bedId: firstDefined(source, ['bedId', 'id']),
-    studentNo: displayValue(source, ['studentNo', 'studentNumber', 'studentId', 'sno', '学号']),
-    studentName: displayValue(source, ['studentName', 'name', 'studentRealName', '姓名']),
-    gender: displayValue(source, ['studentGenderName', 'genderName', 'gender', 'sex', '性别']),
-    collegeName: displayValue(source, ['studentCollegeName', 'collegeName', 'college', 'collegeLabel', '学院', '学院名称']),
-    counselorName: displayValue(source, ['studentCounselorName']),
-    counselorPhone: displayValue(source, ['studentCounselorPhone']),
-    classTeacherName: displayValue(source, ['studentClassTeacher']),
-    classTeacherPhone: displayValue(source, ['studentClassTeacherPhone']),
-    campusName: displayValue(source, ['campusName', 'campus', 'campusLabel', '校区', '校区名称']),
-    zoneName: displayValue(source, ['zoneName', 'zone', 'zoneLabel', '苑区', '苑区名称']),
-    buildingName: displayValue(source, ['buildingName', 'building', 'buildingLabel', '楼栋', '楼栋名称']),
-    floor: displayValue(source, ['floorNo', 'floor', 'floorNumber', '楼层']),
-    roomCode: displayValue(source, ['roomCode', 'roomNo', 'roomNumber', 'roomName', '寝室', '房间号']),
-    bedStatusCode: firstDefined(source, ['statusCode', 'bedStatusCode', 'status', 'bedStatus']),
-    bedStatus: displayValue(source, ['statusName', 'bedStatusName', 'bedStatus', 'status', 'statusCode', '床位状态', '住宿状态']),
-    standardBedCount: Number(firstDefined(source, ['standardBedCount', 'bedCount', '床位数']) || 0),
-    roomId: firstDefined(source, ['roomId', 'room_id']),
-    roomGenderName: displayValue(source, ['roomGenderName']),
-    statusCode: firstDefined(source, ['statusCode', 'bedStatusCode', 'status', 'bedStatus']),
-    assignable: source.assignable,
-    active: source.active,
-    roomAssignable: source.roomAssignable,
-    roomActive: source.roomActive,
-    currentStudentId: source.currentStudentId,
-    buildingId: firstDefined(source, ['buildingId', 'building_id']),
-    zoneId: firstDefined(source, ['zoneId', 'zone_id']),
-    campusId: firstDefined(source, ['campusId', 'campus_id']),
+  return normalizeOccupancyRows(sourceRows, { campusId: props.campusId, campusName: props.campusName }).map((bed) => ({
+    id: bed.bedKey,
+    bedId: bed.bedId,
+    studentNo: bed.occupant?.studentNo || '-',
+    studentName: bed.occupant?.name || '-',
+    gender: bed.occupant?.gender || '-',
+    collegeName: bed.occupant?.collegeName || '-',
+    counselorName: displayValue(bed.raw, ['studentCounselorName']),
+    counselorPhone: displayValue(bed.raw, ['studentCounselorPhone']),
+    classTeacherName: displayValue(bed.raw, ['studentClassTeacher']),
+    classTeacherPhone: displayValue(bed.raw, ['studentClassTeacherPhone']),
+    campusName: bed.campus.name,
+    zoneName: bed.zone.name,
+    buildingName: bed.building.name,
+    floor: bed.floor || '-',
+    roomCode: bed.roomCode || '-',
+    bedStatusCode: bed.status.code,
+    bedStatus: bed.status.label || bed.status.code,
+    standardBedCount: bed.capacity,
+    roomId: bed.roomId,
+    roomGenderName: displayValue(bed.raw, ['roomGenderName']),
+    statusCode: bed.status.code,
+    assignable: bed.status.isAllocatable,
+    active: bed.raw.active,
+    roomAssignable: bed.raw.roomAssignable,
+    roomActive: bed.raw.roomActive,
+    currentStudentId: bed.occupant?.studentId ?? bed.occupant?.studentNo,
+    buildingId: bed.building.id,
+    zoneId: bed.zone.id,
+    campusId: bed.campus.id,
   }))
 }
 
@@ -488,7 +496,7 @@ function resizeCharts() {
 
 async function loadRows() {
   const version = ++requestVersion
-  if (!props.campusId) { rows.value = []; errorMessage.value = ''; return }
+  if (!props.campusId) { rows.value = []; occupancyModel.value = null; errorMessage.value = ''; return }
   loading.value = true
   errorMessage.value = ''
   try {
@@ -497,6 +505,7 @@ async function loadRows() {
       : unwrapResponse(await getBeds({ campusId: props.campusId, status: 'ALL' })).items
     if (!Array.isArray(sourceRows)) throw new Error('床位数据格式不正确')
     if (version !== requestVersion) return
+    occupancyModel.value = buildOccupancyModel(sourceRows, { campusId: props.campusId, campusName: props.campusName })
     rows.value = normalizeBedRows(sourceRows)
     await nextTick()
     renderCharts()
@@ -536,6 +545,14 @@ onBeforeUnmount(() => {
     <div class="heatmap-panel__heading">
       <div>
         <h2 id="heatmap-panel-title">寝室分配热力图</h2>
+        <p class="heatmap-panel__schema">入住数据 · 房间状态 · 排寝方案三层叠加</p>
+      </div>
+      <div v-if="occupancyModel" class="heatmap-summary" aria-label="入住数据摘要">
+        <span><strong>{{ occupancySummary.totalBeds }}</strong> 张床位</span>
+        <span><strong>{{ occupancySummary.rooms }}</strong> 间房</span>
+        <span><strong>{{ occupancySummary.occupiedBeds }}</strong> 人已入住</span>
+        <span><strong>{{ occupancySummary.availableBeds }}</strong> 张可分配</span>
+        <span class="heatmap-summary__rate"><strong>{{ (occupancySummary.occupancyRate * 100).toFixed(1) }}%</strong> 入住率</span>
       </div>
       <div class="heatmap-legend" aria-label="寝室状态说明">
         <span><i class="heatmap-legend__marker heatmap-legend__marker--empty"></i>空房间</span>
@@ -662,6 +679,33 @@ onBeforeUnmount(() => {
   color: var(--text);
   font-size: 1.1rem;
 }
+
+.heatmap-panel__schema {
+  margin: .25rem 0 0;
+  color: var(--muted);
+  font-size: .72rem;
+  letter-spacing: .03em;
+}
+
+.heatmap-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: .35rem .8rem;
+  color: var(--muted);
+  font-size: .72rem;
+}
+
+.heatmap-summary span {
+  padding-right: .8rem;
+  border-right: 1px solid rgba(159, 179, 209, .22);
+  white-space: nowrap;
+}
+
+.heatmap-summary span:last-child { padding-right: 0; border-right: 0; }
+.heatmap-summary strong { margin-right: .18rem; color: var(--text); font-family: var(--number-font, "DIN Alternate", Consolas, monospace); font-size: .9rem; }
+.heatmap-summary__rate strong { color: #36d399; }
 
 .heatmap-legend {
   display: flex;

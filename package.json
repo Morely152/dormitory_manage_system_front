@@ -5,8 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:allocation": "python -m flask --app allocation_service.app run --host 127.0.0.1 --port 5001",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --test"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",

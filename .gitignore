@@ -10,6 +10,8 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 vite.*.log
+__pycache__/
+*.py[cod]
 .idea
 .vscode/*
 !.vscode/extensions.json

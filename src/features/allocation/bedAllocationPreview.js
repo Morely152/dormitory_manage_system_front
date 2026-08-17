@@ -84,6 +84,11 @@ function displayRoom(meta, allocation, originalState) {
 function buildEntries(snapshot, beds) {
   const roomMap = normalizeRoomMeta(beds)
   const entries = []
+  const relaxedCounts = new Map()
+  ;(snapshot?.assignments || []).filter((assignment) => assignment.compatibilityMode === 'relaxed').forEach((assignment) => {
+    const key = `${assignment.roomKey}|${assignment.collegeId}|${assignment.level}|${assignment.gender}`
+    relaxedCounts.set(key, (relaxedCounts.get(key) || 0) + 1)
+  })
   ;(snapshot?.rooms || []).forEach((snapshotRoom) => {
     const meta = roomMetaFor(snapshotRoom, roomMap)
     ;(snapshotRoom.allocations || []).forEach((allocation) => {
@@ -96,6 +101,7 @@ function buildEntries(snapshot, beds) {
         level: allocation.level,
         gender: allocation.gender,
         plannedBeds,
+        relaxedBeds: relaxedCounts.get(`${snapshotRoom.roomKey}|${allocation.collegeId}|${allocation.level}|${allocation.gender}`) || 0,
         roomLabel: displayRoom(meta, allocation, snapshotRoom.originalState),
       })
     })
@@ -110,6 +116,7 @@ function mergeRoomEntries(entries) {
     const existing = merged.get(key)
     if (existing) {
       existing.plannedBeds += entry.plannedBeds
+      existing.relaxedBeds += entry.relaxedBeds
       existing.roomLabel = displayRoom(entry, { plannedBeds: existing.plannedBeds }, 'PARTIAL')
     } else {
       merged.set(key, { ...entry })
@@ -127,16 +134,18 @@ function buildBuildingRows(entries) {
       zoneName: entry.zoneName,
       entries: [],
       assignedBeds: 0,
+      relaxedBeds: 0,
     })
     const building = buildings.get(key)
     building.entries.push(entry)
     building.assignedBeds += entry.plannedBeds
+    building.relaxedBeds += entry.relaxedBeds
   })
   return [...buildings.values()].sort((left, right) => compareNatural(`${left.buildingName}|${left.zoneName}`, `${right.buildingName}|${right.zoneName}`)).map((building) => ({
     ...building,
     roomText: building.entries.sort((left, right) => compareNatural(left.roomCode, right.roomCode)).map((entry) => entry.roomLabel).join('、'),
     roomCount: building.entries.length,
-    remark: `${building.assignedBeds}人`,
+    remark: `${building.assignedBeds}人${building.relaxedBeds ? `，含 ${building.relaxedBeds} 人宽松插空` : ''}`,
   }))
 }
 
@@ -149,10 +158,12 @@ function buildBuildingCollegeRows(entries) {
       collegeName: entry.collegeName,
       entries: [],
       assignedBeds: 0,
+      relaxedBeds: 0,
     })
     const group = groups.get(key)
     group.entries.push(entry)
     group.assignedBeds += entry.plannedBeds
+    group.relaxedBeds += entry.relaxedBeds
   })
   const rows = [...groups.values()]
     .sort((left, right) => compareNatural(`${left.buildingName}|${left.collegeName}`, `${right.buildingName}|${right.collegeName}`))
@@ -160,7 +171,7 @@ function buildBuildingCollegeRows(entries) {
       ...group,
       roomText: group.entries.sort((left, right) => compareNatural(left.roomCode, right.roomCode)).map((entry) => entry.roomLabel).join('、'),
       roomCount: group.entries.length,
-      remark: `${group.assignedBeds}人`,
+      remark: `${group.assignedBeds}人${group.relaxedBeds ? `，含 ${group.relaxedBeds} 人宽松插空` : ''}`,
     }))
   rows.forEach((row, index) => {
     const isStart = index === 0 || rows[index - 1].buildingName !== row.buildingName
@@ -193,15 +204,7 @@ function buildDetailedRows(entries, level) {
 }
 
 function buildGraduateRows(entries) {
-  return GENDER_ORDER.map((gender) => {
-    const genderEntries = entries.filter((entry) => entry.level === 'graduate' && entry.gender === gender)
-    if (!genderEntries.length) return null
-    return {
-      gender,
-      genderTotal: genderEntries.reduce((sum, entry) => sum + entry.plannedBeds, 0),
-      rows: buildBuildingRows(genderEntries),
-    }
-  }).filter(Boolean)
+  return buildDetailedRows(entries, 'graduate')
 }
 
 function buildUndergraduateByZone(entries) {
