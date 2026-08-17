@@ -11,9 +11,17 @@ function getImageUrl(response) {
   return url
 }
 
-export async function uploadImage(file) {
+export async function uploadImage(file, options = {}) {
   const formData = new FormData()
   formData.append('file', file)
+
+  if (options.purpose) {
+    formData.append('purpose', options.purpose)
+  }
+
+  if (options.visibility) {
+    formData.append('visibility', options.visibility)
+  }
 
   const response = await http.post('/media/images', formData, {
     timeout: 120000,

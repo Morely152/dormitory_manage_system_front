@@ -17,6 +17,13 @@ import { getRepairAreas, getRepairIssueTypes, submitRepair, uploadRepairImage } 
 import { getCurrentStudentProfile } from '@/api/student'
 import { useAuthStore } from '@/stores/auth'
 
+defineProps({
+  embedded: {
+    type: Boolean,
+    default: false,
+  },
+})
+
 const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp']
 const MAX_IMAGE_SIZE = 20 * 1024 * 1024
 const MAX_IMAGE_DIMENSION = 4096
@@ -24,7 +31,11 @@ const MAX_IMAGE_PIXELS = 16_000_000
 
 const auth = useAuthStore()
 const isStudent = computed(() => auth.currentRole.value === ROLE_KEYS.STUDENT)
-const isZoneAdmin = computed(() => auth.currentRole.value === ROLE_KEYS.ZONE_ADMIN)
+const canSelectRepairRoom = computed(() =>
+  [ROLE_KEYS.SYSTEM_ADMIN, ROLE_KEYS.ZONE_ADMIN, ROLE_KEYS.ZONE_MANAGER].includes(
+    auth.currentRole.value,
+  ),
+)
 const form = reactive({
   campusId: '',
   zoneId: '',
@@ -393,58 +404,78 @@ function resetAfterSubmit() {
   repairAreaGroups.value = [createAreaGroup()]
 }
 
-function buildRepairAreasPayload() {
-  const repairAreas = new Map()
+function buildSubmitBatches() {
+  const batches = new Map()
 
   repairAreaGroups.value.forEach((group) => {
-    if (!repairAreas.has(group.repairAreaId)) {
-      repairAreas.set(group.repairAreaId, {
-        repairAreaId: group.repairAreaId,
-        problems: [],
-      })
-    }
-
     group.problems.forEach((problem) => {
-      repairAreas.get(group.repairAreaId).problems.push({
-        issueTypeId: problem.issueTypeId,
-        otherIssueRemark: problem.otherIssueRemark.trim() || null,
+      const batchKey = `${group.repairAreaId}:${problem.issueTypeId}`
+
+      if (!batches.has(batchKey)) {
+        batches.set(batchKey, {
+          payload: {
+            repairAreaId: group.repairAreaId,
+            issueTypeId: problem.issueTypeId,
+            roomId: form.roomId,
+            problem: [],
+          },
+          sourceProblems: [],
+        })
+      }
+
+      const batch = batches.get(batchKey)
+      const item = {
         description: problem.description.trim(),
         reportImageUrl: problem.reportImageUrl,
-      })
+      }
+      if (problem.otherIssueRemark.trim()) {
+        item.otherIssueRemark = problem.otherIssueRemark.trim()
+      }
+      batch.payload.problem.push(item)
+      batch.sourceProblems.push(problem)
     })
   })
 
-  return [...repairAreas.values()]
+  return [...batches.values()]
 }
 
-function buildLegacyProblemsPayload() {
-  return {
-    roomId: form.roomId,
-    problem: repairAreaGroups.value.flatMap((group) =>
-      group.problems.map((problem) => ({
-        issueTypeId: problem.issueTypeId,
-        otherIssueRemark: problem.otherIssueRemark.trim() || null,
-        description: problem.description.trim(),
-        reportImageUrl: problem.reportImageUrl,
-      })),
-    ),
-  }
+function keepUnsubmittedProblems(submittedBatches) {
+  const submittedProblemIds = new Set(
+    submittedBatches.flatMap((batch) => batch.sourceProblems.map((problem) => problem.id)),
+  )
+  const remainingGroups = repairAreaGroups.value.reduce((groups, group) => {
+    group.problems = group.problems.filter((problem) => !submittedProblemIds.has(problem.id))
+    if (group.problems.length) groups.push(group)
+    return groups
+  }, [])
+
+  repairAreaGroups.value = remainingGroups.length ? remainingGroups : [createAreaGroup()]
 }
 
 async function handleSubmit() {
   if (submitting.value || hasActiveUpload.value || !validateForm()) return
 
   submitting.value = true
+  const submittedBatches = []
+  const submittedIds = []
   try {
-    const response = await submitRepair({
-      roomId: form.roomId,
-      repairAreas: buildRepairAreasPayload(),
-    }, buildLegacyProblemsPayload())
-    const data = unwrapResponse(response, '报修提交失败')
-    resultIds.value = Array.isArray(data?.ids) ? data.ids : []
+    for (const batch of buildSubmitBatches()) {
+      const data = unwrapResponse(await submitRepair(batch.payload), '报修提交失败')
+      submittedBatches.push(batch)
+      submittedIds.push(...(Array.isArray(data?.ids) ? data.ids : []))
+    }
+
+    resultIds.value = submittedIds
     ElMessage.success(`已成功提交 ${totalProblems.value} 条维修问题`)
     resetAfterSubmit()
   } catch (error) {
+    if (submittedBatches.length) {
+      keepUnsubmittedProblems(submittedBatches)
+      resultIds.value = submittedIds
+      ElMessage.warning(`已提交 ${submittedBatches.reduce((total, batch) => total + batch.sourceProblems.length, 0)} 条问题，其余问题请修正后重新提交`)
+      return
+    }
+
     ElMessage.error(requestErrorMessage(error, '报修提交失败，请稍后重试'))
   } finally {
     submitting.value = false
@@ -454,14 +485,14 @@ async function handleSubmit() {
 onMounted(async () => {
   const requests = [loadRepairAreas()]
   if (isStudent.value) requests.push(loadStudentAccommodation())
-  if (isZoneAdmin.value) requests.push(loadCampuses())
+  if (canSelectRepairRoom.value) requests.push(loadCampuses())
   await Promise.all(requests)
 })
 </script>
 
 <template>
   <div class="feature-page repair-application-page">
-    <header class="feature-header">
+    <header v-if="!embedded" class="feature-header">
       <div class="feature-header__icon" aria-hidden="true">
         <el-icon><EditPen /></el-icon>
       </div>
@@ -499,7 +530,7 @@ onMounted(async () => {
         class="accommodation-alert"
       />
 
-      <div v-if="isZoneAdmin" class="location-grid">
+      <div v-if="canSelectRepairRoom" class="location-grid">
         <el-form-item label="校区" required>
           <el-select
             v-model="form.campusId"
@@ -857,6 +888,10 @@ onMounted(async () => {
   width: 100%;
 }
 
+.repair-workspace :deep(.el-select__wrapper) {
+  min-height: 44px;
+}
+
 .field-empty {
   margin: 7px 0 0;
   color: var(--color-text-muted);
@@ -1209,6 +1244,11 @@ onMounted(async () => {
 }
 
 @media (max-width: 640px) {
+  .feature-header {
+    align-items: flex-start;
+    gap: 12px;
+  }
+
   .repair-workspace {
     padding: 18px 16px;
   }
@@ -1249,6 +1289,18 @@ onMounted(async () => {
 
   .area-group__heading {
     align-items: flex-start;
+  }
+
+  .area-group__title {
+    flex: 1 1 auto;
+    align-items: flex-start;
+  }
+
+  .area-group__delete,
+  .problem-delete,
+  .photo-preview__delete {
+    min-width: 44px;
+    min-height: 44px;
   }
 
   .area-group__append .el-button,
