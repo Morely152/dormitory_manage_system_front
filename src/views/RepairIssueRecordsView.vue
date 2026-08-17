@@ -189,14 +189,14 @@ function getAudienceStatusTagType(record) {
 
 function getProgressIndex(statusCode, reporterView) {
   if (reporterView) {
-    if (['PENDING', 'WAIT_CENTER_REVIEW', 'CENTER_REJECTED', 'WAIT_ASSIGN', 'WAIT_ACCEPT'].includes(statusCode)) return 1
+    if (['PENDING', 'WAIT_CENTER_REVIEW', 'CENTER_REJECTED', 'WAIT_ASSIGN'].includes(statusCode)) return 1
     if (['REPAIRING', 'REWORK_REQUIRED'].includes(statusCode)) return 2
     return 3
   }
 
   if (statusCode === 'PENDING') return 0
   if (['WAIT_CENTER_REVIEW', 'CENTER_REJECTED'].includes(statusCode)) return 1
-  if (['WAIT_ASSIGN', 'WAIT_ACCEPT'].includes(statusCode)) return 2
+  if (statusCode === 'WAIT_ASSIGN') return 2
   if (['REPAIRING', 'REWORK_REQUIRED'].includes(statusCode)) return 3
   return 4
 }

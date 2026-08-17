@@ -14,7 +14,6 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import ImageUpload from '@/components/ImageUpload.vue'
 import { ROLE_KEYS } from '@/config/access'
 import {
-  acceptRepairWorkOrder,
   assignRepairWorkOrder,
   createRepairWorkOrder,
   getMyRepairWorkOrders,
@@ -23,7 +22,6 @@ import {
   getRepairWorkOrder,
   getRepairWorkOrderSummary,
   getRepairWorkOrders,
-  getUnacceptedRepairWorkOrders,
   resubmitRepairWorkOrder,
   reviewRepairWorkOrder,
   submitRepairQualityReview,
@@ -101,13 +99,8 @@ const canVoidSelected = computed(
 const canDispatchSelected = computed(
   () =>
     canDispatchOrder.value &&
-    (['dispatch', 'unaccepted'].includes(props.mode) || isSystemAdminRecords.value) &&
-    ['WAIT_ASSIGN', 'WAIT_ACCEPT', 'REWORK_REQUIRED'].includes(selectedOrder.value?.statusCode),
-)
-const canAcceptSelected = computed(
-  () =>
-    (props.mode === 'pending' || isSystemAdminRecords.value) &&
-    selectedOrder.value?.statusCode === 'WAIT_ACCEPT',
+    (props.mode === 'dispatch' || isSystemAdminRecords.value) &&
+    ['WAIT_ASSIGN', 'REWORK_REQUIRED'].includes(selectedOrder.value?.statusCode),
 )
 const canSubmitResultsSelected = computed(
   () =>
@@ -141,14 +134,8 @@ const pageConfigs = Object.freeze({
   dispatch: {
     eyebrow: '工单管理',
     title: '派发工单',
-    description: '为已通过审核的工单选择范围匹配的维修账号。',
-    statuses: ['WAIT_ASSIGN', 'WAIT_ACCEPT', 'REWORK_REQUIRED'],
-  },
-  unaccepted: {
-    eyebrow: '工单管理',
-    title: '未接单工单',
-    description: '查看已派发但尚未接单的工单，便于及时进行线下跟进。',
-    unaccepted: true,
+    description: '为已通过审核的工单选择范围匹配的维修账号，派发后直接进入维修中。',
+    statuses: ['WAIT_ASSIGN', 'REWORK_REQUIRED'],
   },
   pending: {
     eyebrow: '维修工作台',
@@ -196,7 +183,6 @@ const candidates = ref([])
 const summary = reactive({
   pendingRequestCount: 0,
   workOrderCounts: {},
-  unacceptedCount: 0,
 })
 
 const filters = reactive({
@@ -234,7 +220,6 @@ const qualityItems = ref([])
 let activatedOnce = false
 
 const displayedStatusOptions = computed(() => {
-  if (config.value.unaccepted) return []
   if (!config.value.statuses) return WORK_ORDER_STATUSES
   return WORK_ORDER_STATUSES.filter((item) => config.value.statuses.includes(item.value))
 })
@@ -279,8 +264,6 @@ async function loadOrders({ recoverEmptyPage = false } = {}) {
       (['records', 'history'].includes(props.mode) && repairAccountRole.value)
     const response = useMyWorkOrders
       ? await getMyRepairWorkOrders(getQueryParams())
-      : config.value.unaccepted
-      ? await getUnacceptedRepairWorkOrders(getQueryParams())
       : await getRepairWorkOrders(getQueryParams())
     const page = toPagedResult(response, '工单列表加载失败')
     rows.value = page.items
@@ -303,7 +286,6 @@ async function loadSummary() {
     const data = unwrapRepairResponse(await getRepairWorkOrderSummary({}), '维修汇总加载失败')
     summary.pendingRequestCount = Number(data?.pendingRequestCount || 0)
     summary.workOrderCounts = data?.workOrderCounts || {}
-    summary.unacceptedCount = Number(data?.unacceptedCount || 0)
   } catch (error) {
     ElMessage.error(requestErrorMessage(error, '维修汇总加载失败'))
   }
@@ -514,7 +496,7 @@ async function saveReview() {
 
 async function openAssignmentDialog() {
   await refreshSelectedOrder()
-  if (!['WAIT_ASSIGN', 'WAIT_ACCEPT', 'REWORK_REQUIRED'].includes(selectedOrder.value?.statusCode)) {
+  if (!['WAIT_ASSIGN', 'REWORK_REQUIRED'].includes(selectedOrder.value?.statusCode)) {
     ElMessage.warning('工单状态已变化，请根据最新状态继续处理')
     await refreshPage({ recoverEmptyPage: true })
     return
@@ -560,45 +542,13 @@ async function saveAssignment() {
     await assignRepairWorkOrder(selectedOrder.value.id, {
       repairerUserId: assignmentForm.repairerUserId,
     })
-    ElMessage.success('工单已派发')
+    ElMessage.success('工单已派发，直接进入维修中')
     assignmentDialogVisible.value = false
     await openDetail(selectedOrder.value)
     await refreshPage()
   } catch (error) {
     if (await recoverFromDataConflict(error)) return
     ElMessage.error(requestErrorMessage(error, '派发工单失败'))
-  } finally {
-    saving.value = false
-  }
-}
-
-async function acceptOrder() {
-  await refreshSelectedOrder()
-  if (selectedOrder.value?.statusCode !== 'WAIT_ACCEPT') {
-    ElMessage.warning('工单状态已变化，请根据最新状态继续处理')
-    await refreshPage({ recoverEmptyPage: true })
-    return
-  }
-
-  try {
-    await ElMessageBox.confirm('确认接单后将进入维修中状态，是否继续？', '确认接单', {
-      confirmButtonText: '确认接单',
-      cancelButtonText: '暂不接单',
-      type: 'info',
-    })
-  } catch {
-    return
-  }
-
-  saving.value = true
-  try {
-    await acceptRepairWorkOrder(selectedOrder.value.id)
-    ElMessage.success('已确认接单')
-    await openDetail(selectedOrder.value)
-    await refreshPage()
-  } catch (error) {
-    if (await recoverFromDataConflict(error)) return
-    ElMessage.error(requestErrorMessage(error, '确认接单失败'))
   } finally {
     saving.value = false
   }
@@ -826,7 +776,7 @@ onActivated(async () => {
         <article class="summary-card"><span>待处理问题</span><strong>{{ summary.pendingRequestCount }}</strong></article>
         <article class="summary-card"><span>待派单工单</span><strong>{{ summary.workOrderCounts.WAIT_ASSIGN || 0 }}</strong></article>
         <article class="summary-card"><span>维修中工单</span><strong>{{ summary.workOrderCounts.REPAIRING || 0 }}</strong></article>
-        <article class="summary-card summary-card--alert"><span>未接单工单</span><strong>{{ summary.unacceptedCount }}</strong></article>
+        <article class="summary-card"><span>待验收工单</span><strong>{{ summary.workOrderCounts.WAIT_ACCEPTANCE || 0 }}</strong></article>
       </section>
 
       <section v-if="mode === 'review'" class="work-order-review-focus" aria-label="工单审核">
@@ -844,7 +794,7 @@ onActivated(async () => {
 
       <section class="work-order-filter-card" aria-label="工单筛选">
         <el-form inline @submit.prevent="handleSearch">
-          <el-form-item v-if="!config.unaccepted && mode !== 'review'" label="处理状态">
+          <el-form-item v-if="mode !== 'review'" label="处理状态">
             <el-select v-model="filters.statusCode" :clearable="!config.statuses" placeholder="全部状态">
               <el-option v-for="item in displayedStatusOptions" :key="item.value" :label="item.label" :value="item.value" />
             </el-select>
@@ -958,7 +908,6 @@ onActivated(async () => {
             <el-button v-if="canVoidSelected" type="danger" plain :loading="saving" @click="removeOrder">作废工单</el-button>
             <el-button v-if="canReviewSelected" type="primary" :icon="Check" @click="openReviewDialog">开始审核</el-button>
             <el-button v-if="canDispatchSelected" type="primary" :icon="Promotion" @click="openAssignmentDialog">派发工单</el-button>
-            <el-button v-if="canAcceptSelected" type="primary" :icon="Check" :loading="saving" @click="acceptOrder">确认接单</el-button>
             <el-button v-if="canSubmitResultsSelected" type="primary" :icon="Tools" @click="openRepairDialog">提交维修结果</el-button>
             <el-button v-if="canQualityReviewSelected" type="primary" :icon="Finished" @click="openQualityDialog">提交验收结果</el-button>
           </div>
