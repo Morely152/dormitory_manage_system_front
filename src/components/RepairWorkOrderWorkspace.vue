@@ -28,7 +28,9 @@ import {
   submitRepairWorkOrderResults,
   updateRepairWorkOrderDraft,
   voidRepairWorkOrder,
+  unwrapResponse,
 } from '@/api/repair'
+import { getBuildings, getCampuses, getZones } from '@/api/roomManagement'
 import {
   WORK_ORDER_STATUSES,
   WORK_ORDER_TYPE_OPTIONS,
@@ -66,6 +68,11 @@ const repairAccountRole = computed(() =>
   [ROLE_KEYS.REPAIR_WORKER, ROLE_KEYS.REPAIR_TEAM].includes(auth.currentRole.value),
 )
 const canViewSummary = computed(() =>
+  [ROLE_KEYS.ZONE_MANAGER, ROLE_KEYS.DORMITORY_ADMIN, ROLE_KEYS.SYSTEM_ADMIN].includes(
+    auth.currentRole.value,
+  ),
+)
+const managerRole = computed(() =>
   [ROLE_KEYS.ZONE_MANAGER, ROLE_KEYS.DORMITORY_ADMIN, ROLE_KEYS.SYSTEM_ADMIN].includes(
     auth.currentRole.value,
   ),
@@ -184,11 +191,17 @@ const summary = reactive({
   pendingRequestCount: 0,
   workOrderCounts: {},
 })
+const campusOptions = ref([])
+const zoneOptions = ref([])
+const buildingOptions = ref([])
 
 const filters = reactive({
   statusCode: '',
   workOrderTypeCode: '',
   dateRange: [],
+  campusId: '',
+  zoneId: '',
+  buildingId: '',
   page: 1,
   pageSize: 20,
 })
@@ -247,6 +260,12 @@ function getQueryParams() {
     params.to = filters.dateRange[1]
   }
 
+  if (managerRole.value) {
+    params.campusId = filters.campusId || undefined
+    params.zoneId = filters.zoneId || undefined
+    params.buildingId = filters.buildingId || undefined
+  }
+
   return params
 }
 
@@ -297,6 +316,52 @@ async function loadPendingRequests() {
     pendingRequests.value = toPagedResult(response, '待处理问题加载失败').items
   } catch (error) {
     ElMessage.error(requestErrorMessage(error, '待处理问题加载失败'))
+  }
+}
+
+async function loadCampusOptions() {
+  try {
+    const rows = unwrapResponse(await getCampuses(), '校区列表加载失败')
+    campusOptions.value = rows.map((item) => ({
+      value: item.id || item.campusId,
+      label: item.campusName || item.name,
+    }))
+  } catch (error) {
+    ElMessage.error(requestErrorMessage(error, '校区列表加载失败'))
+  }
+}
+
+async function handleCampusChange(campusId) {
+  filters.zoneId = ''
+  filters.buildingId = ''
+  zoneOptions.value = []
+  buildingOptions.value = []
+  if (!campusId) return
+
+  try {
+    const rows = unwrapResponse(await getZones(campusId), '苑区列表加载失败')
+    zoneOptions.value = rows.map((item) => ({
+      value: item.id || item.zoneId,
+      label: item.zoneName || item.name,
+    }))
+  } catch (error) {
+    ElMessage.error(requestErrorMessage(error, '苑区列表加载失败'))
+  }
+}
+
+async function handleZoneChange(zoneId) {
+  filters.buildingId = ''
+  buildingOptions.value = []
+  if (!zoneId) return
+
+  try {
+    const rows = unwrapResponse(await getBuildings(zoneId), '楼栋列表加载失败')
+    buildingOptions.value = rows.map((item) => ({
+      value: item.id || item.buildingId,
+      label: item.buildingName || item.name,
+    }))
+  } catch (error) {
+    ElMessage.error(requestErrorMessage(error, '楼栋列表加载失败'))
   }
 }
 
@@ -672,6 +737,11 @@ function handleReset() {
   filters.statusCode = config.value.statuses?.[0] || ''
   filters.workOrderTypeCode = ''
   filters.dateRange = []
+  filters.campusId = ''
+  filters.zoneId = ''
+  filters.buildingId = ''
+  zoneOptions.value = []
+  buildingOptions.value = []
   filters.page = 1
   loadOrders()
 }
@@ -693,6 +763,11 @@ watch(
     filters.page = 1
     filters.workOrderTypeCode = ''
     filters.dateRange = []
+    filters.campusId = ''
+    filters.zoneId = ''
+    filters.buildingId = ''
+    zoneOptions.value = []
+    buildingOptions.value = []
     rows.value = []
     selectedOrder.value = null
     detailVisible.value = false
@@ -709,6 +784,7 @@ watch(
 
 onMounted(async () => {
   initStatusFilter()
+  if (managerRole.value) loadCampusOptions()
   await refreshPage()
 })
 
@@ -795,17 +871,32 @@ onActivated(async () => {
       <section class="work-order-filter-card" aria-label="工单筛选">
         <el-form inline @submit.prevent="handleSearch">
           <el-form-item v-if="mode !== 'review'" label="处理状态">
-            <el-select v-model="filters.statusCode" :clearable="!config.statuses" placeholder="全部状态">
+            <el-select v-model="filters.statusCode" :clearable="!config.statuses" placeholder="全部状态" @change="handleSearch">
               <el-option v-for="item in displayedStatusOptions" :key="item.value" :label="item.label" :value="item.value" />
             </el-select>
           </el-form-item>
           <el-form-item label="工单类型">
-            <el-select v-model="filters.workOrderTypeCode" clearable placeholder="全部类型">
+            <el-select v-model="filters.workOrderTypeCode" clearable placeholder="全部类型" @change="handleSearch">
               <el-option v-for="item in WORK_ORDER_TYPE_OPTIONS" :key="item.value" :label="item.label" :value="item.value" />
             </el-select>
           </el-form-item>
           <el-form-item label="派单时间">
-            <el-date-picker v-model="filters.dateRange" type="daterange" value-format="YYYY-MM-DDTHH:mm:ss" range-separator="至" start-placeholder="开始日期" end-placeholder="结束日期" />
+            <el-date-picker v-model="filters.dateRange" type="daterange" value-format="YYYY-MM-DDTHH:mm:ss" range-separator="至" start-placeholder="开始日期" end-placeholder="结束日期" @change="handleSearch" />
+          </el-form-item>
+          <el-form-item v-if="managerRole" label="校区">
+            <el-select v-model="filters.campusId" clearable placeholder="全部校区" @change="(val) => { handleCampusChange(val); handleSearch() }">
+              <el-option v-for="item in campusOptions" :key="item.value" :label="item.label" :value="item.value" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="managerRole" label="苑区">
+            <el-select v-model="filters.zoneId" clearable placeholder="全部苑区" :disabled="!filters.campusId" @change="(val) => { handleZoneChange(val); handleSearch() }">
+              <el-option v-for="item in zoneOptions" :key="item.value" :label="item.label" :value="item.value" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="managerRole" label="楼栋">
+            <el-select v-model="filters.buildingId" clearable placeholder="全部楼栋" :disabled="!filters.zoneId" @change="handleSearch">
+              <el-option v-for="item in buildingOptions" :key="item.value" :label="item.label" :value="item.value" />
+            </el-select>
           </el-form-item>
           <el-form-item class="work-order-filter-card__actions">
             <el-button type="primary" :icon="Search" @click="handleSearch">查询</el-button>
