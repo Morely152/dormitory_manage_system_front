@@ -19,7 +19,23 @@ const implementedComponents = {
   'operation-log': () => import('@/views/OperationLogView.vue'),
   'bed-allocation': () => import('@/views/BedAllocationView.vue'),
   'bed-allocation-new': () => import('@/views/BedAllocationNewView.vue'),
+  'maintenance-workbench': () => import('@/views/RepairWorkbenchView.vue'),
+  'maintenance-work-orders': () => import('@/views/RepairWorkOrderHubView.vue'),
+  'maintenance-reports': () => import('@/views/RepairReportHubView.vue'),
+  'maintenance-operation-log': () => import('@/views/RepairOperationLogView.vue'),
   'repair-application': () => import('@/views/RepairApplicationView.vue'),
+  'repair-my-requests': () => import('@/views/RepairMyRequestsView.vue'),
+  'repair-issue-records': () => import('@/views/RepairIssueRecordsView.vue'),
+  'repair-history': () => import('@/views/RepairHistoryView.vue'),
+  'repair-work-order-create': () => import('@/views/RepairWorkOrderCreateView.vue'),
+  'repair-work-order-pending-review': () => import('@/views/RepairWorkOrderPendingReviewView.vue'),
+  'repair-work-order-review': () => import('@/views/RepairWorkOrderReviewView.vue'),
+  'repair-work-order-dispatch': () => import('@/views/RepairWorkOrderDispatchView.vue'),
+  'repair-work-order-pending': () => import('@/views/RepairWorkOrderPendingView.vue'),
+  'repair-work-order-unaccepted': () => import('@/views/RepairWorkOrderUnacceptedView.vue'),
+  'repair-work-order-records': () => import('@/views/RepairWorkOrderRecordsView.vue'),
+  'repair-work-order-acceptance': () => import('@/views/RepairWorkOrderAcceptanceView.vue'),
+  'repair-dictionary': () => import('@/views/RepairDictionaryView.vue'),
 }
 
 const businessRoutes = ACCESS_MODULES.map((module) => ({
@@ -97,6 +113,10 @@ const router = createRouter({
 
 router.beforeEach((to) => {
   const auth = useAuthStore()
+
+  if (to.name === 'MaintenanceWorkbench') {
+    return { name: 'MaintenanceWorkspace' }
+  }
 
   if (to.meta.requiresAuth && !auth.isAuthenticated.value) {
     return {

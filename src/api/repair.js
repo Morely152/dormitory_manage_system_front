@@ -1,6 +1,6 @@
 import http from './http'
 
-function unwrapResponse(response, fallbackMessage) {
+export function unwrapResponse(response, fallbackMessage) {
   if (response?.code !== undefined && response.code !== 0) {
     throw new Error(response.message || fallbackMessage)
   }
@@ -13,6 +13,22 @@ export function getRepairAreas() {
 
 export function getRepairIssueTypes(areaId) {
   return http.get(`/repair-requests/areas/${areaId}/issue-types`)
+}
+
+export function createRepairArea(data) {
+  return http.post('/repair-dictionaries/areas', data)
+}
+
+export function updateRepairArea(areaId, data) {
+  return http.put(`/repair-dictionaries/areas/${areaId}`, data)
+}
+
+export function createRepairIssueType(data) {
+  return http.post('/repair-dictionaries/issue-types', data)
+}
+
+export function updateRepairIssueType(issueTypeId, data) {
+  return http.put(`/repair-dictionaries/issue-types/${issueTypeId}`, data)
 }
 
 export async function uploadRepairImage(file) {
@@ -36,12 +52,96 @@ function requiresLegacyProblemPayload(error) {
   return status === 400 && /\bproblem\b/.test(message) && /不能为空|must not be empty|must not be null/.test(message)
 }
 
-export async function submitRepair(payload, legacyPayload) {
-  try {
-    return await http.post('/repair-requests', payload)
-  } catch (error) {
-    // Older local backend instances require a top-level `problem` array.
-    if (!legacyPayload || !requiresLegacyProblemPayload(error)) throw error
-    return http.post('/repair-requests', legacyPayload)
-  }
+export function submitRepair(payload) {
+  return http.post('/repair-requests', payload)
+}
+
+export function getMyRepairRequests(params) {
+  return http.get('/repair-requests/mine', { params })
+}
+
+export function getRepairRequests(params) {
+  return http.get('/repair-requests', { params })
+}
+
+export function getRepairRequest(requestId) {
+  return http.get(`/repair-requests/${requestId}`)
+}
+
+export function updateRepairRequest(requestId, data) {
+  return http.put(`/repair-requests/${requestId}`, data)
+}
+
+export function cancelRepairRequest(requestId) {
+  return http.delete(`/repair-requests/${requestId}`)
+}
+
+export function submitRepairSatisfaction(requestId, data) {
+  return http.post(`/repair-requests/${requestId}/satisfaction`, data)
+}
+
+export function updateRepairPriority(requestId, data) {
+  return http.patch(`/repair-requests/${requestId}/priority`, data)
+}
+
+export function createRepairWorkOrder(data) {
+  return http.post('/repair-work-orders', data)
+}
+
+export function getRepairWorkOrders(params) {
+  return http.get('/repair-work-orders', { params })
+}
+
+export function getRepairWorkOrder(workOrderId) {
+  return http.get(`/repair-work-orders/${workOrderId}`)
+}
+
+export function updateRepairWorkOrderDraft(workOrderId, data) {
+  return http.put(`/repair-work-orders/${workOrderId}/draft`, data)
+}
+
+export function voidRepairWorkOrder(workOrderId) {
+  return http.delete(`/repair-work-orders/${workOrderId}`)
+}
+
+export function resubmitRepairWorkOrder(workOrderId) {
+  return http.post(`/repair-work-orders/${workOrderId}/resubmit`)
+}
+
+export function reviewRepairWorkOrder(workOrderId, data) {
+  return http.post(`/repair-work-orders/${workOrderId}/center-review`, data)
+}
+
+export function getRepairAssignmentCandidates(workOrderId) {
+  return http.get('/repair-work-orders/assignment-candidates', {
+    params: { workOrderId },
+  })
+}
+
+export function assignRepairWorkOrder(workOrderId, data) {
+  return http.put(`/repair-work-orders/${workOrderId}/assignment`, data)
+}
+
+export function getUnacceptedRepairWorkOrders(params) {
+  return http.get('/repair-work-orders/unaccepted', { params })
+}
+
+export function getMyRepairWorkOrders(params) {
+  return http.get('/repair-work-orders/mine', { params })
+}
+
+export function acceptRepairWorkOrder(workOrderId) {
+  return http.post(`/repair-work-orders/${workOrderId}/accept`)
+}
+
+export function submitRepairWorkOrderResults(workOrderId, data) {
+  return http.post(`/repair-work-orders/${workOrderId}/repair-results`, data)
+}
+
+export function submitRepairQualityReview(workOrderId, data) {
+  return http.post(`/repair-work-orders/${workOrderId}/quality-review`, data)
+}
+
+export function getRepairWorkOrderSummary(params) {
+  return http.get('/repair-work-orders/summary', { params })
 }

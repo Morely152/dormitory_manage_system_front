@@ -25,6 +25,14 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  purpose: {
+    type: String,
+    default: '',
+  },
+  visibility: {
+    type: String,
+    default: '',
+  },
 })
 
 const emit = defineEmits(['update:modelValue'])
@@ -69,7 +77,10 @@ async function handleUpload({ file, onError, onSuccess }) {
   activeUploads.value += 1
 
   try {
-    const url = await uploadImage(file)
+    const url = await uploadImage(file, {
+      purpose: props.purpose,
+      visibility: props.visibility,
+    })
     emit('update:modelValue', [...urls.value, url])
     onSuccess?.({ url })
   } catch (error) {

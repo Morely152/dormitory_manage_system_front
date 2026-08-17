@@ -27,23 +27,59 @@ http.interceptors.request.use((config) => {
 function handleAuthExpired() {
   useAuthStore().logout()
   if (router.currentRoute.value.name !== 'Login') {
-    void router.replace({ name: 'Login' })
+    void router.replace({
+      name: 'Login',
+      query: { redirect: router.currentRoute.value.fullPath },
+    })
   }
+}
+
+function handleForbidden() {
+  if (router.currentRoute.value.name !== 'Forbidden') {
+    void router.replace({ name: 'Forbidden' })
+  }
+}
+
+function toApiError(response) {
+  const body = response.data || {}
+  const error = new Error(body.message || '请求未能完成')
+
+  error.apiCode = body.code
+  error.response = response
+
+  return error
 }
 
 http.interceptors.response.use(
   (response) => {
-    if (response.data?.code === 40102) {
+    const body = response.data
+
+    if (body?.code === 40102) {
       handleAuthExpired()
     }
+    if (body?.code === 40300) {
+      handleForbidden()
+    }
 
-    return response.data
+    if (body?.code !== undefined && body.code !== 0) {
+      return Promise.reject(toApiError(response))
+    }
+
+    return body
   },
   (error) => {
     const status = error.response?.status
     const code = error.response?.data?.code
+
+    if (code !== undefined && error.apiCode === undefined) {
+      error.apiCode = code
+    }
+
     if (status === 401 || code === 40102) {
       handleAuthExpired()
+    }
+    if (status === 403 || code === 40300) {
+      handleForbidden()
     }
 
     return Promise.reject(error)

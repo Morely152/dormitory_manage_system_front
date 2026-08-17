@@ -45,6 +45,9 @@ function normalizeStudent(source) {
     id: firstDefined(source, ['id', 'studentId', 'student_id']),
     studentNo: String(firstDefined(source, ['studentNo', 'studentNumber', 'sno']) ?? ''),
     studentName: String(firstDefined(source, ['studentName', 'name', 'studentRealName']) ?? ''),
+    genderName: String(firstDefined(source, ['genderName', 'studentGenderName', 'gender']) ?? ''),
+    gradeYear: firstDefined(source, ['gradeYear', 'grade_year']) ?? null,
+    mobile: String(firstDefined(source, ['mobile', 'studentMobile', 'phone']) ?? ''),
     collegeId: firstDefined(source, ['collegeId', 'studentCollegeId']),
     collegeName: String(firstDefined(source, ['collegeName', 'studentCollegeName', 'college']) ?? ''),
     majorName: String(firstDefined(source, ['majorName', 'studentMajorName', 'major']) ?? ''),
@@ -154,6 +157,14 @@ export async function submitMajorChange({ studentId, ...academicInfo }) {
     '转专业信息修改失败',
   )
   return { message: '转专业信息修改成功' }
+}
+
+export async function submitBasicInfoChange({ studentId, ...basicInfo }) {
+  await requestData(
+    () => http.put(`/counselor/students/${studentId}/basic-info`, basicInfo),
+    '学生基本信息修改失败',
+  )
+  return { message: '学生基本信息修改成功' }
 }
 
 export async function submitDormitoryChangeApplication(payload) {

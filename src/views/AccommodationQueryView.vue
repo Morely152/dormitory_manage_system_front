@@ -18,6 +18,10 @@ const displayMode = ref('chart')
 // 空床位楼栋图的排序模式：默认按空床位数量从高到低排列。
 const emptyBedSortMode = ref('count')
 const collegeOptions = ref([])
+// 学院 id -> 名称映射，用于按当前用户 college_id 锁定学院筛选
+const collegeIdNameMap = ref(new Map())
+// 当前用户绑定了学院时，学院筛选框锁定为该学院且不可改
+const lockedCollegeName = ref('')
 const campusOptions = ref([])
 const zoneOptions = ref([])
 const buildingOptions = ref([])
@@ -79,6 +83,9 @@ const BED_STATUS_OPTIONS = [
   { label: '全部床位', value: 'ALL' },
   { label: '空床位', value: 'AVAILABLE' },
   { label: '已入住', value: 'OCCUPIED' },
+  { label: '全空床位', value: 'EMPTY_ROOM' },
+  { label: '可插空床位（本科生）', value: 'PARTIAL_ROOM_UNDERGRADUATE' },
+  { label: '可插空床位（研究生）', value: 'PARTIAL_ROOM_GRADUATE' },
   // { label: '不可用床位', value: 'UNAVAILABLE' },
 ]
 
@@ -86,8 +93,25 @@ const BED_STATUS_LABELS = Object.freeze({
   ALL: '全部床位',
   AVAILABLE: '空床位',
   OCCUPIED: '已入住',
+  EMPTY_ROOM: '全空床位',
+  PARTIAL_ROOM: '可插空床位',
+  PARTIAL_ROOM_UNDERGRADUATE: '可插空床位（本科生）',
+  PARTIAL_ROOM_GRADUATE: '可插空床位（研究生）',
   UNAVAILABLE: '不可用床位',
 })
+
+const PARTIAL_ROOM_STUDENT_TYPE_STATUSES = Object.freeze([
+  'PARTIAL_ROOM_UNDERGRADUATE',
+  'PARTIAL_ROOM_GRADUATE',
+])
+
+// 空床位类筛选模式：空床位、全空床位和两类可插空床位均以空床位维度绘制左侧分布图
+const EMPTY_BED_CHART_STATUSES = Object.freeze([
+  'AVAILABLE',
+  'EMPTY_ROOM',
+  ...PARTIAL_ROOM_STUDENT_TYPE_STATUSES,
+])
+const isEmptyBedChartMode = computed(() => EMPTY_BED_CHART_STATUSES.includes(filters.status))
 
 const pagination = reactive({
   currentPage: 1,
@@ -173,9 +197,9 @@ const collegeOccupiedDistribution = computed(() => countBy(
   (row) => (row.collegeName === '-' ? '未标注学院' : row.collegeName),
 ))
 
-// 空床位筛选下，左侧图改用位置维度分布（空床位无学院归属）
+// 空床位类筛选下，左侧图改用位置维度分布（空床位无学院归属）
 const emptyBedLocationDistribution = computed(() => {
-  if (filters.status !== 'AVAILABLE') return []
+  if (!isEmptyBedChartMode.value) return []
   const emptyRows = dashboardRows.value.filter((row) => isAvailableBedStatus(row.bedStatusCode, row.bedStatus))
   // 选中具体楼栋后，统计维度从楼栋降级为楼层。
   if (filters.building) {
@@ -214,11 +238,15 @@ const emptyBedLocationDistribution = computed(() => {
 })
 
 // 左侧图会在学院入住人数、楼栋空床位数和楼层空床位数之间切换。
-const leftChartTitle = computed(() => (
-  filters.status === 'AVAILABLE'
-    ? (filters.building ? '各楼层空床位数' : '各楼栋空床位数')
-    : '各学院入住人数'
-))
+const leftChartTitle = computed(() => {
+  if (!isEmptyBedChartMode.value) return '各学院入住人数'
+  if (filters.status === 'EMPTY_ROOM') return filters.building ? '各楼层全空床位' : '各楼栋全空床位'
+  if (isPartialRoomStudentTypeStatus(filters.status)) {
+    const label = BED_STATUS_LABELS[filters.status]
+    return filters.building ? `各楼层${label}` : `各楼栋${label}`
+  }
+  return filters.building ? '各楼层空床位数' : '各楼栋空床位数'
+})
 const leftChartAriaLabel = computed(() => `${leftChartTitle.value}横向条形图`)
 
 const buildingNodes = computed(() => buildBuildingNodes(dashboardRows.value))
@@ -336,7 +364,7 @@ watch(
 
 // 排序切换只重新绘制已有统计数据，不重复请求后端接口。
 watch(emptyBedSortMode, () => {
-  if (displayMode.value === 'chart' && filters.status === 'AVAILABLE' && !filters.building) {
+  if (displayMode.value === 'chart' && isEmptyBedChartMode.value && !filters.building) {
     renderDashboardCharts()
   }
 })
@@ -406,6 +434,51 @@ function isAvailableBedStatus(...values) {
 function isOccupiedBed(row) {
   const values = [row.bedStatusCode, row.bedStatus]
   return values.some((value) => ['OCCUPIED', '已入住'].includes(String(value ?? '').trim().toUpperCase()))
+}
+
+function isPartialRoomStudentTypeStatus(status = filters.status) {
+  return PARTIAL_ROOM_STUDENT_TYPE_STATUSES.includes(status)
+}
+
+function isGraduateStudent(row) {
+  return isOccupiedBed(row) && String(row.studentNo ?? '').trim().startsWith('1')
+}
+
+function filterPartialRoomRowsByStudentType(rows, status = filters.status) {
+  if (!isPartialRoomStudentTypeStatus(status)) return rows
+
+  const rooms = new Map()
+  rows.forEach((row) => {
+    const roomKey = getRoomGroupKey(row)
+    if (!rooms.has(roomKey)) {
+      rooms.set(roomKey, {
+        total: 0,
+        returnedCount: 0,
+        occupied: 0,
+        hasGraduateStudent: false,
+      })
+    }
+
+    const room = rooms.get(roomKey)
+    room.total = Math.max(room.total, getRoomCapacity(row))
+    room.returnedCount += 1
+    if (isOccupiedBed(row)) room.occupied += 1
+    if (isGraduateStudent(row)) room.hasGraduateStudent = true
+  })
+
+  const shouldIncludeGraduateRooms = status === 'PARTIAL_ROOM_GRADUATE'
+  return rows.filter((row) => {
+    const room = rooms.get(getRoomGroupKey(row))
+    const total = room.total || room.returnedCount
+    const isPartialRoom = room.occupied > 0 && room.occupied < total
+    return isPartialRoom && room.hasGraduateStudent === shouldIncludeGraduateRooms
+  })
+}
+
+function matchesStudentSearch(row) {
+  if (filters.studentNo && !isSameValue(row.studentNo, filters.studentNo)) return false
+  if (filters.studentName && !String(row.studentName ?? '').trim().includes(filters.studentName)) return false
+  return true
 }
 
 function normalizeGender(value) {
@@ -701,7 +774,7 @@ function buildBedQuery(page, size, includeStudentSearch = false) {
     buildingId: filters.building || undefined,
     roomId: filters.room || undefined,
     genderCode: filters.gender || undefined,
-    status: filters.status,
+    status: isPartialRoomStudentTypeStatus() ? 'ALL' : filters.status,
   }
 
   if (includeStudentSearch) {
@@ -772,24 +845,29 @@ function waitForCachedChartLoading(loadingStartedAt) {
 async function loadBedRows() {
   const requestVersion = ++bedRequestVersion
   const college = filters.college
-  const needsCollegeFilter = Boolean(college)
+  const needsClientSideFiltering = Boolean(college) || isPartialRoomStudentTypeStatus()
   bedTableLoading.value = true
 
   try {
     const data = unwrapResponse(await getCachedBeds(
-      needsCollegeFilter ? buildBedQuery(undefined, undefined, true) : buildBedQuery(pagination.currentPage, pagination.pageSize, true),
+      needsClientSideFiltering
+        ? buildBedQuery(undefined, undefined, !isPartialRoomStudentTypeStatus())
+        : buildBedQuery(pagination.currentPage, pagination.pageSize, true),
     ), '床位列表加载失败')
     if (!Array.isArray(data?.items)) {
       throw new Error('床位分页响应格式不正确')
     }
 
     if (requestVersion !== bedRequestVersion) return
-    const rows = normalizeBedRows(data.items)
-    if (needsCollegeFilter) {
-      const collegeRows = rows.filter((row) => isSameValue(row.collegeName, college))
+    const rows = filterPartialRoomRowsByStudentType(normalizeBedRows(data.items))
+    if (needsClientSideFiltering) {
+      const filteredRows = rows.filter((row) => (
+        (!college || isSameValue(row.collegeName, college))
+        && (!isPartialRoomStudentTypeStatus() || matchesStudentSearch(row))
+      ))
       const startIndex = (pagination.currentPage - 1) * pagination.pageSize
-      bedRows.value = collegeRows.slice(startIndex, startIndex + pagination.pageSize)
-      pagination.total = collegeRows.length
+      bedRows.value = filteredRows.slice(startIndex, startIndex + pagination.pageSize)
+      pagination.total = filteredRows.length
       return
     }
 
@@ -819,7 +897,7 @@ async function loadChartRows() {
 
     if (usesCache) await waitForCachedChartLoading(loadingStartedAt)
     if (requestVersion !== chartRequestVersion) return
-    chartRows.value = normalizeBedRows(data.items)
+    chartRows.value = filterPartialRoomRowsByStudentType(normalizeBedRows(data.items))
     await nextTick()
     renderDashboardCharts()
   } catch (error) {
@@ -1220,7 +1298,7 @@ function renderDashboardCharts() {
     selectedBuildingId.value = ''
   }
 
-  const isAvailableMode = filters.status === 'AVAILABLE'
+  const isAvailableMode = isEmptyBedChartMode.value
   const leftChartData = isAvailableMode
     ? (emptyBedLocationDistribution.value.length
         ? emptyBedLocationDistribution.value
@@ -1603,6 +1681,100 @@ function buildBedTableSheetRows(rows) {
   return [headers, ...dataRows]
 }
 
+// 全空/可插空宿舍导出：左列楼栋信息，右列寝室（可插空模式附带可插空人数）
+function buildRoomSummarySheetData(rows, status) {
+  const isPartial = isPartialRoomStudentTypeStatus(status)
+  const headers = isPartial ? ['楼栋', '寝室（可插空人数）', '原寝室学院'] : ['楼栋', '寝室']
+
+  // 按楼栋分组并保持出现顺序
+  const buildingList = []
+  const buildingMap = new Map()
+  rows.forEach((row) => {
+    const buildingKey = getBuildingKey(row)
+    if (!buildingMap.has(buildingKey)) {
+      const buildingInfo = {
+        campusName: row.campusName,
+        zoneName: row.zoneName,
+        buildingName: row.buildingName,
+        rooms: new Map(),
+        roomOrder: [],
+      }
+      buildingMap.set(buildingKey, buildingInfo)
+      buildingList.push(buildingInfo)
+    }
+    const building = buildingMap.get(buildingKey)
+    const roomKey = getRoomGroupKey(row)
+    if (!building.rooms.has(roomKey)) {
+      building.rooms.set(roomKey, {
+        roomCode: row.roomCode,
+        empty: 0,
+        collegeCounts: new Map(),
+      })
+      building.roomOrder.push(roomKey)
+    }
+    const room = building.rooms.get(roomKey)
+    if (!isOccupiedBed(row)) {
+      room.empty += 1
+      return
+    }
+
+    const collegeName = String(row.collegeName ?? '').trim()
+    if (collegeName && collegeName !== '-') {
+      room.collegeCounts.set(collegeName, (room.collegeCounts.get(collegeName) || 0) + 1)
+    }
+  })
+
+  // 跨校区/苑区时在楼栋标签中补全路径，避免同名楼栋混淆
+  const campusSet = new Set()
+  const zoneSet = new Set()
+  buildingList.forEach((building) => {
+    campusSet.add(building.campusName)
+    zoneSet.add(`${building.campusName}|${building.zoneName}`)
+  })
+  const includeCampus = campusSet.size > 1
+  const includeZone = zoneSet.size > 1
+
+  const dataRows = []
+  const merges = []
+  let rowIndex = 1 // 数据从第 2 行开始（第 1 行为表头）
+
+  buildingList.forEach((building) => {
+    const labelParts = []
+    if (includeCampus && building.campusName && building.campusName !== '-') labelParts.push(building.campusName)
+    if (includeZone && building.zoneName && building.zoneName !== '-') labelParts.push(building.zoneName)
+    labelParts.push(building.buildingName)
+    const buildingLabel = labelParts.join(' / ') || building.buildingName
+
+    const roomCount = building.roomOrder.length
+    building.roomOrder.forEach((roomKey, index) => {
+      const room = building.rooms.get(roomKey)
+      const roomLabel = isPartial
+        ? `${room.roomCode}（可插空 ${room.empty} 人）`
+        : `${room.roomCode}`
+      const dominantCollege = [...room.collegeCounts.entries()].reduce(
+        (currentCollege, [collegeName, count]) => (
+          count > currentCollege.count ? { name: collegeName, count } : currentCollege
+        ),
+        { name: '', count: 0 },
+      ).name
+      // 仅在楼栋首行写入楼栋名，其余留空用于合并
+      dataRows.push(isPartial
+        ? [index === 0 ? buildingLabel : '', roomLabel, dominantCollege]
+        : [index === 0 ? buildingLabel : '', roomLabel])
+    })
+
+    if (roomCount > 1) {
+      merges.push({
+        s: { r: rowIndex, c: 0 },
+        e: { r: rowIndex + roomCount - 1, c: 0 },
+      })
+    }
+    rowIndex += roomCount
+  })
+
+  return { headers, dataRows, merges }
+}
+
 function styleBedTableWorksheet(worksheet, spreadsheet) {
   const range = spreadsheet.utils.decode_range(worksheet['!ref'] || 'A1:A1')
   const border = {
@@ -1642,15 +1814,16 @@ function styleBedTableWorksheet(worksheet, spreadsheet) {
 async function exportBedTable() {
   if (exportingExcel.value) return
 
-  const query = buildBedQuery(undefined, undefined, true)
+  const query = buildBedQuery(undefined, undefined, !isPartialRoomStudentTypeStatus())
   const college = filters.college
   exportingExcel.value = true
   try {
     const data = unwrapResponse(await getCachedBeds(query), '床位数据导出失败')
     if (!Array.isArray(data?.items)) throw new Error('床位查询响应格式不正确')
 
-    const rows = normalizeBedRows(data.items).filter((row) => (
-      !college || isSameValue(row.collegeName, college)
+    const rows = filterPartialRoomRowsByStudentType(normalizeBedRows(data.items)).filter((row) => (
+      (!college || isSameValue(row.collegeName, college))
+      && (!isPartialRoomStudentTypeStatus() || matchesStudentSearch(row))
     ))
     if (!rows.length) {
       ElMessage.info('当前筛选条件下没有可导出的床位数据')
@@ -1659,14 +1832,36 @@ async function exportBedTable() {
 
     const spreadsheet = await import('xlsx-js-style')
     const XLSX = spreadsheet.default || spreadsheet
-    const worksheet = XLSX.utils.aoa_to_sheet(buildBedTableSheetRows(rows))
-    worksheet['!cols'] = EXCEL_COLUMNS.map((column) => ({ wch: column.width }))
-    worksheet['!merges'] = getDormitoryCellMerges(rows)
-    styleBedTableWorksheet(worksheet, XLSX)
+    const isRoomSummaryExport = filters.status === 'EMPTY_ROOM' || isPartialRoomStudentTypeStatus()
+
+    let worksheet
+    let sheetName
+    let fileName
+
+    if (isRoomSummaryExport) {
+      const { headers, dataRows, merges } = buildRoomSummarySheetData(rows, filters.status)
+      worksheet = XLSX.utils.aoa_to_sheet([headers, ...dataRows])
+      worksheet['!cols'] = [
+        { wch: 28 },
+        { wch: isPartialRoomStudentTypeStatus() ? 26 : 16 },
+        ...(isPartialRoomStudentTypeStatus() ? [{ wch: 24 }] : []),
+      ]
+      worksheet['!merges'] = merges
+      styleBedTableWorksheet(worksheet, XLSX)
+      sheetName = filters.status === 'EMPTY_ROOM' ? '全空宿舍' : '可插空宿舍'
+      fileName = `赣南师范大学${sheetName}清单-${new Date().toISOString().slice(0, 10)}.xlsx`
+    } else {
+      worksheet = XLSX.utils.aoa_to_sheet(buildBedTableSheetRows(rows))
+      worksheet['!cols'] = EXCEL_COLUMNS.map((column) => ({ wch: column.width }))
+      worksheet['!merges'] = getDormitoryCellMerges(rows)
+      styleBedTableWorksheet(worksheet, XLSX)
+      sheetName = '床位统计表'
+      fileName = `赣南师范大学宿舍床位统计表-${new Date().toISOString().slice(0, 10)}.xlsx`
+    }
 
     const workbook = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(workbook, worksheet, '床位统计表')
-    XLSX.writeFile(workbook, `赣南师范大学宿舍床位统计表-${new Date().toISOString().slice(0, 10)}.xlsx`, { cellStyles: true })
+    XLSX.utils.book_append_sheet(workbook, worksheet, sheetName)
+    XLSX.writeFile(workbook, fileName, { cellStyles: true })
     ElMessage.success(`已导出 ${rows.length} 条床位数据`)
   } catch (error) {
     ElMessage.error(await requestErrorMessage(error, '床位数据导出失败'))
@@ -1696,14 +1891,29 @@ async function loadCollegeOptions() {
     const rows = unwrapResponse(await getCollegeOptions(), '学院列表加载失败')
     if (!Array.isArray(rows)) throw new Error('学院列表响应格式不正确')
 
+    const nameMap = new Map()
     collegeOptions.value = [...new Set(
       rows
         .map((row) => {
           if (typeof row === 'string' || typeof row === 'number') return String(row).trim()
-          return String(firstDefined(row, ['collegeName', 'name', 'label', 'value']) ?? '').trim()
+          const id = firstDefined(row, ['id', 'collegeId', 'value'])
+          const name = String(firstDefined(row, ['collegeName', 'name', 'label', 'value']) ?? '').trim()
+          if (id !== undefined && id !== null && name) nameMap.set(String(id), name)
+          return name
         })
         .filter(Boolean),
     )].sort((nameA, nameB) => nameA.localeCompare(nameB, 'zh-CN', { numeric: true }))
+    collegeIdNameMap.value = nameMap
+
+    // 登录用户绑定了学院时，把学院筛选框锁定为该学院
+    const userCollegeId = auth.currentUser.value?.collegeId
+    if (userCollegeId) {
+      const matchedName = nameMap.get(String(userCollegeId))
+      if (matchedName) {
+        lockedCollegeName.value = matchedName
+        filters.college = matchedName
+      }
+    }
   } catch (error) {
     ElMessage.error(await requestErrorMessage(error, '学院列表加载失败'))
   } finally {
@@ -1839,10 +2049,11 @@ async function handleBuildingChange(buildingId) {
         <span>学院</span>
         <el-select
           v-model="filters.college"
-          clearable
+          :clearable="!lockedCollegeName"
+          :disabled="!!lockedCollegeName"
           filterable
           :loading="loading.colleges"
-          placeholder="全部学院"
+          :placeholder="lockedCollegeName || '全部学院'"
         >
           <el-option v-for="college in collegeOptions" :key="college" :label="college" :value="college" />
         </el-select>
@@ -2144,7 +2355,7 @@ async function handleBuildingChange(buildingId) {
               <h3>{{ leftChartTitle }}</h3>
               <!-- 排序切换仅用于空床位楼栋图；进入具体楼栋的楼层图后自动隐藏。 -->
               <el-radio-group
-                v-if="filters.status === 'AVAILABLE' && !filters.building"
+                v-if="isEmptyBedChartMode && !filters.building"
                 v-model="emptyBedSortMode"
                 class="empty-bed-sort-switch"
                 size="small"
