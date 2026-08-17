@@ -29,3 +29,14 @@ export async function uploadImage(file, options = {}) {
 
   return getImageUrl(response)
 }
+
+export async function uploadFile(file) {
+  const formData = new FormData()
+  formData.append('file', file)
+
+  const response = await http.post('/media/files', formData, {
+    timeout: 120000,
+  })
+
+  return getImageUrl(response)
+}

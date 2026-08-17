@@ -25,6 +25,7 @@ export const ROLE_OPTIONS = Object.freeze([
 export const SUBSYSTEM_KEYS = Object.freeze({
   BED: 'bed',
   MAINTENANCE: 'maintenance',
+  OPINION_COLLECTION: 'opinion-collection',
   SYSTEM: 'system',
 })
 
@@ -64,6 +65,15 @@ export const SUBSYSTEMS = Object.freeze([
     description: '覆盖报修上报、问题流转、工单处理与验收。',
     icon: 'Tools',
     roles: maintenanceRoles,
+  },
+  {
+    id: SUBSYSTEM_KEYS.OPINION_COLLECTION,
+    routeName: 'OpinionCollectionWorkspace',
+    path: '/opinion-collection',
+    title: '意见征集',
+    description: '汇集学生生活意见，推动宿舍服务持续改进。',
+    icon: 'ChatDotRound',
+    roles: [ROLE_KEYS.SYSTEM_ADMIN, ROLE_KEYS.DORMITORY_ADMIN, ROLE_KEYS.STUDENT],
   },
   {
     id: SUBSYSTEM_KEYS.SYSTEM,

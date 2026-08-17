@@ -35,7 +35,7 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(['update:modelValue'])
+const emit = defineEmits(['update:modelValue', 'uploading-change'])
 const fileList = ref([])
 const previewUrl = ref('')
 const activeUploads = ref(0)
@@ -58,6 +58,8 @@ watch(
   },
   { immediate: true },
 )
+
+watch(isUploading, (value) => emit('uploading-change', value), { immediate: true })
 
 function beforeUpload(file) {
   if (!file.type.startsWith('image/')) {

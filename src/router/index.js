@@ -56,7 +56,10 @@ const businessRoutes = ACCESS_MODULES.map((module) => ({
 const subsystemRoutes = SUBSYSTEMS.map((subsystem) => ({
   path: subsystem.path,
   name: subsystem.routeName,
-  component: () => import('@/views/SubsystemWorkspaceView.vue'),
+  component:
+    subsystem.id === 'opinion-collection'
+      ? () => import('@/views/OpinionCollectionView.vue')
+      : () => import('@/views/SubsystemWorkspaceView.vue'),
   meta: {
     requiresAuth: true,
     roles: subsystem.roles,
