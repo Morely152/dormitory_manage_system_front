@@ -65,7 +65,6 @@ const studentAccommodation = reactive({
   roomCode: '',
 })
 let nextProblemId = 1
-let nextAreaGroupId = 1
 let zoneRequestVersion = 0
 let buildingRequestVersion = 0
 let roomRequestVersion = 0
@@ -73,9 +72,13 @@ let roomRequestVersion = 0
 function createProblem() {
   return {
     id: nextProblemId++,
+    repairAreaId: '',
+    repairAreaError: '',
+    issueTypeOptions: [],
+    issueTypesLoading: false,
+    issueTypeRequestVersion: 0,
     issueTypeId: '',
     description: '',
-    otherIssueRemark: '',
     reportImageUrl: '',
     uploading: false,
     uploadError: '',
@@ -85,25 +88,9 @@ function createProblem() {
   }
 }
 
-function createAreaGroup() {
-  return {
-    id: nextAreaGroupId++,
-    repairAreaId: '',
-    repairAreaError: '',
-    issueTypeOptions: [],
-    issueTypesLoading: false,
-    issueTypeRequestVersion: 0,
-    problems: [createProblem()],
-  }
-}
-
-const repairAreaGroups = ref([createAreaGroup()])
-const totalProblems = computed(() =>
-  repairAreaGroups.value.reduce((total, group) => total + group.problems.length, 0),
-)
-const hasActiveUpload = computed(() =>
-  repairAreaGroups.value.some((group) => group.problems.some((problem) => problem.uploading)),
-)
+const problems = ref([createProblem()])
+const totalProblems = computed(() => problems.value.length)
+const hasActiveUpload = computed(() => problems.value.some((problem) => problem.uploading))
 const studentLocation = computed(() =>
   [
     studentAccommodation.campusName,
@@ -152,27 +139,25 @@ async function loadRepairAreas() {
   }
 }
 
-async function handleRepairAreaChange(group, areaId) {
-  const requestVersion = ++group.issueTypeRequestVersion
-  group.repairAreaError = ''
-  group.issueTypeOptions = []
-  group.problems.forEach((problem) => {
-    problem.issueTypeId = ''
-    problem.issueTypeError = ''
-  })
+async function handleRepairAreaChange(problem, areaId) {
+  const requestVersion = ++problem.issueTypeRequestVersion
+  problem.repairAreaError = ''
+  problem.issueTypeOptions = []
+  problem.issueTypeId = ''
+  problem.issueTypeError = ''
   if (!areaId) return
 
-  group.issueTypesLoading = true
+  problem.issueTypesLoading = true
   try {
     const rows = unwrapResponse(await getRepairIssueTypes(areaId), '问题类型加载失败')
-    if (requestVersion !== group.issueTypeRequestVersion) return
-    group.issueTypeOptions = toOptions(rows, ['id', 'issueTypeId', 'value'], ['name', 'typeName', 'label'])
+    if (requestVersion !== problem.issueTypeRequestVersion) return
+    problem.issueTypeOptions = toOptions(rows, ['id', 'issueTypeId', 'value'], ['name', 'typeName', 'label'])
   } catch (error) {
-    if (requestVersion === group.issueTypeRequestVersion) {
+    if (requestVersion === problem.issueTypeRequestVersion) {
       ElMessage.error(requestErrorMessage(error, '问题类型加载失败'))
     }
   } finally {
-    if (requestVersion === group.issueTypeRequestVersion) group.issueTypesLoading = false
+    if (requestVersion === problem.issueTypeRequestVersion) problem.issueTypesLoading = false
   }
 }
 
@@ -283,22 +268,13 @@ async function handleBuildingChange(buildingId) {
   }
 }
 
-function addAreaGroup() {
-  repairAreaGroups.value.push(createAreaGroup())
+function addProblem() {
+  problems.value.push(createProblem())
 }
 
-function removeAreaGroup(groupId) {
-  if (repairAreaGroups.value.length === 1) return
-  repairAreaGroups.value = repairAreaGroups.value.filter((group) => group.id !== groupId)
-}
-
-function addProblem(group) {
-  group.problems.push(createProblem())
-}
-
-function removeProblem(group, problemId) {
-  if (group.problems.length === 1) return
-  group.problems = group.problems.filter((problem) => problem.id !== problemId)
+function removeProblem(problemId) {
+  if (problems.value.length === 1) return
+  problems.value = problems.value.filter((problem) => problem.id !== problemId)
 }
 
 function clearProblemImage(problem) {
@@ -364,76 +340,63 @@ function validateForm() {
     ElMessage.warning(isStudent.value ? '当前未绑定有效寝室，无法提交报修' : '请选择报修寝室')
     valid = false
   }
-  repairAreaGroups.value.forEach((group, groupIndex) => {
-    group.repairAreaError = ''
-    if (!group.repairAreaId) {
-      group.repairAreaError = '请选择报修区域'
+  problems.value.forEach((problem) => {
+    const description = problem.description.trim()
+    problem.repairAreaError = ''
+    problem.descriptionError = ''
+    problem.issueTypeError = ''
+    problem.imageError = ''
+    if (!problem.repairAreaId) {
+      problem.repairAreaError = '请选择报修区域'
       valid = false
     }
-
-    group.problems.forEach((problem, problemIndex) => {
-      const description = problem.description.trim()
-      problem.descriptionError = ''
-      problem.issueTypeError = ''
-      problem.imageError = ''
-      if (!problem.issueTypeId) {
-        problem.issueTypeError = '请选择问题类型'
-        valid = false
-      }
-      if (!description) {
-        problem.descriptionError = '请填写问题描述'
-        valid = false
-      } else if (description.length > 2000) {
-        problem.descriptionError = '问题描述不能超过 2000 个字符'
-        valid = false
-      }
-      if (problem.otherIssueRemark.trim().length > 5000) {
-        ElMessage.warning(`区域 ${groupIndex + 1} 的问题 ${problemIndex + 1} 补充备注不能超过 5000 个字符`)
-        valid = false
-      }
-      if (!problem.reportImageUrl) {
-        problem.imageError = problem.uploading ? '图片正在上传，请稍候' : '请上传一张问题图片'
-        valid = false
-      }
-    })
+    if (!problem.issueTypeId) {
+      problem.issueTypeError = '请选择问题类型'
+      valid = false
+    }
+    if (!description) {
+      problem.descriptionError = '请填写问题描述'
+      valid = false
+    } else if (description.length > 2000) {
+      problem.descriptionError = '问题描述不能超过 2000 个字符'
+      valid = false
+    }
+    if (!problem.reportImageUrl) {
+      problem.imageError = problem.uploading ? '图片正在上传，请稍候' : '请上传一张问题图片'
+      valid = false
+    }
   })
   return valid
 }
 
 function resetAfterSubmit() {
-  repairAreaGroups.value = [createAreaGroup()]
+  problems.value = [createProblem()]
 }
 
 function buildSubmitBatches() {
   const batches = new Map()
 
-  repairAreaGroups.value.forEach((group) => {
-    group.problems.forEach((problem) => {
-      const batchKey = `${group.repairAreaId}:${problem.issueTypeId}`
+  problems.value.forEach((problem) => {
+    const batchKey = `${problem.repairAreaId}:${problem.issueTypeId}`
 
-      if (!batches.has(batchKey)) {
-        batches.set(batchKey, {
-          payload: {
-            repairAreaId: group.repairAreaId,
-            issueTypeId: problem.issueTypeId,
-            roomId: form.roomId,
-            problem: [],
-          },
-          sourceProblems: [],
-        })
-      }
+    if (!batches.has(batchKey)) {
+      batches.set(batchKey, {
+        payload: {
+          repairAreaId: problem.repairAreaId,
+          issueTypeId: problem.issueTypeId,
+          roomId: form.roomId,
+          problem: [],
+        },
+        sourceProblems: [],
+      })
+    }
 
-      const batch = batches.get(batchKey)
-      const item = {
-        description: problem.description.trim(),
-        reportImageUrl: problem.reportImageUrl,
-      }
-      if (problem.otherIssueRemark.trim()) {
-        item.otherIssueRemark = problem.otherIssueRemark.trim()
-      }
-      batch.payload.problem.push(item)
-      batch.sourceProblems.push(problem)
+    const batch = batches.get(batchKey)
+    batch.payload.problem.push({
+      description: problem.description.trim(),
+      reportImageUrl: problem.reportImageUrl,
     })
+    batch.sourceProblems.push(problem)
   })
 
   return [...batches.values()]
@@ -443,13 +406,8 @@ function keepUnsubmittedProblems(submittedBatches) {
   const submittedProblemIds = new Set(
     submittedBatches.flatMap((batch) => batch.sourceProblems.map((problem) => problem.id)),
   )
-  const remainingGroups = repairAreaGroups.value.reduce((groups, group) => {
-    group.problems = group.problems.filter((problem) => !submittedProblemIds.has(problem.id))
-    if (group.problems.length) groups.push(group)
-    return groups
-  }, [])
-
-  repairAreaGroups.value = remainingGroups.length ? remainingGroups : [createAreaGroup()]
+  const remaining = problems.value.filter((problem) => !submittedProblemIds.has(problem.id))
+  problems.value = remaining.length ? remaining : [createProblem()]
 }
 
 async function handleSubmit() {
@@ -499,7 +457,7 @@ onMounted(async () => {
       <div>
         <p>上报问题</p>
         <h1>上报维修</h1>
-        <span>按报修区域分组填写问题，可在每个区域下批量创建多条待处理记录。</span>
+        <span>逐条填写维修问题，每个问题选择对应的报修区域并上传现场图片。</span>
       </div>
     </header>
 
@@ -509,7 +467,7 @@ onMounted(async () => {
           <p class="workspace-heading__eyebrow">报修定位</p>
           <h2>确认报修范围</h2>
         </div>
-        <span class="batch-rule">按区域归类，逐条创建</span>
+        <span class="batch-rule">逐条填写，依次提交</span>
       </div>
 
       <div v-if="isStudent" v-loading="loading.accommodation" class="student-location">
@@ -580,169 +538,118 @@ onMounted(async () => {
       <div class="issues-heading">
         <div>
           <p class="workspace-heading__eyebrow">报修明细</p>
-          <h2>按区域填写维修问题</h2>
+          <h2>填写维修问题</h2>
         </div>
       </div>
 
-      <div class="area-group-list">
-        <section v-for="(group, groupIndex) in repairAreaGroups" :key="group.id" class="area-group">
-          <div class="area-group__heading">
-            <div class="area-group__title">
-              <span class="area-group__index">区域 {{ String(groupIndex + 1).padStart(2, '0') }}</span>
-              <strong>{{ group.repairAreaId ? '已选择报修区域' : '请选择报修区域' }}</strong>
+      <div class="problem-list">
+        <article v-for="(problem, problemIndex) in problems" :key="problem.id" class="problem-card">
+          <div class="problem-card__heading">
+            <span class="problem-index">{{ String(problemIndex + 1).padStart(2, '0') }}</span>
+            <div>
+              <h3>问题 {{ problemIndex + 1 }}</h3>
+              <p>选择报修区域和问题类型，上传一张现场图片。</p>
             </div>
-            <el-tooltip v-if="repairAreaGroups.length > 1" content="删除此报修区域" placement="top">
+            <el-tooltip v-if="problems.length > 1" content="删除此问题" placement="top">
               <el-button
-                class="area-group__delete"
+                class="problem-delete"
                 type="danger"
                 text
                 :icon="Delete"
-                :disabled="submitting || group.problems.some((problem) => problem.uploading)"
-                :aria-label="`删除区域 ${groupIndex + 1}`"
-                @click="removeAreaGroup(group.id)"
+                :disabled="submitting || problem.uploading"
+                :aria-label="`删除问题 ${problemIndex + 1}`"
+                @click="removeProblem(problem.id)"
               />
             </el-tooltip>
           </div>
 
-          <div class="area-group__scope">
-            <el-form-item :error="group.repairAreaError" label="报修区域" required>
-              <el-select
-                v-model="group.repairAreaId"
-                :loading="loading.areas"
-                :disabled="submitting"
-                placeholder="请选择该组的报修区域"
-                @change="handleRepairAreaChange(group, $event)"
-              >
-                <el-option
-                  v-for="item in areaOptions"
-                  :key="item.value"
-                  :label="item.label"
-                  :value="item.value"
-                  :disabled="repairAreaGroups.some((other) => other.id !== group.id && other.repairAreaId === item.value)"
-                />
-              </el-select>
-            </el-form-item>
-            <p v-if="group.repairAreaId && !group.issueTypesLoading && !group.issueTypeOptions.length" class="field-empty">
-              当前区域暂未配置问题类型。
-            </p>
-          </div>
-
-          <div class="area-group__issues-heading">
-            <span>区域内问题</span>
-          </div>
-
-          <div class="problem-list">
-            <article v-for="(problem, problemIndex) in group.problems" :key="problem.id" class="problem-card">
-              <div class="problem-card__heading">
-                <span class="problem-index">{{ String(problemIndex + 1).padStart(2, '0') }}</span>
-                <div>
-                  <h3>问题 {{ problemIndex + 1 }}</h3>
-                  <p>选择问题类型，并上传一张对应的现场图片。</p>
-                </div>
-                <el-tooltip v-if="group.problems.length > 1" content="删除此问题" placement="top">
-                  <el-button
-                    class="problem-delete"
-                    type="danger"
-                    text
-                    :icon="Delete"
-                    :disabled="submitting || problem.uploading"
-                    :aria-label="`删除问题 ${problemIndex + 1}`"
-                    @click="removeProblem(group, problem.id)"
+          <div class="problem-card__body">
+            <div class="problem-inputs">
+              <el-form-item :error="problem.repairAreaError" label="报修区域" required>
+                <el-select
+                  v-model="problem.repairAreaId"
+                  :loading="loading.areas"
+                  :disabled="submitting"
+                  placeholder="请选择报修区域"
+                  @change="handleRepairAreaChange(problem, $event)"
+                >
+                  <el-option
+                    v-for="item in areaOptions"
+                    :key="item.value"
+                    :label="item.label"
+                    :value="item.value"
                   />
-                </el-tooltip>
+                </el-select>
+              </el-form-item>
+              <p v-if="problem.repairAreaId && !problem.issueTypesLoading && !problem.issueTypeOptions.length" class="field-empty">
+                当前区域暂未配置问题类型。
+              </p>
+              <el-form-item :error="problem.issueTypeError" label="问题类型" required>
+                <el-select
+                  v-model="problem.issueTypeId"
+                  :loading="problem.issueTypesLoading"
+                  :disabled="!problem.repairAreaId || !problem.issueTypeOptions.length || submitting"
+                  placeholder="请先选择报修区域"
+                  @change="problem.issueTypeError = ''"
+                >
+                  <el-option
+                    v-for="item in problem.issueTypeOptions"
+                    :key="item.value"
+                    :label="item.label"
+                    :value="item.value"
+                  />
+                </el-select>
+              </el-form-item>
+              <el-form-item :error="problem.descriptionError" label="问题描述" required>
+                <el-input
+                  v-model="problem.description"
+                  type="textarea"
+                  :rows="5"
+                  maxlength="2000"
+                  show-word-limit
+                  :disabled="submitting"
+                  placeholder="请说明故障现象、发生位置和需要协助的事项"
+                  @input="problem.descriptionError = ''"
+                />
+              </el-form-item>
+            </div>
+
+            <div class="photo-field" :class="{ 'is-error': problem.imageError || problem.uploadError }">
+              <span class="photo-field__label">现场图片 <b>*</b></span>
+              <div v-if="problem.reportImageUrl" class="photo-preview">
+                <el-image :src="problem.reportImageUrl" fit="cover" :preview-src-list="[problem.reportImageUrl]" />
+                <button
+                  type="button"
+                  class="photo-preview__delete"
+                  :disabled="submitting || problem.uploading"
+                  aria-label="删除现场图片"
+                  @click="clearProblemImage(problem)"
+                >
+                  <el-icon><Delete /></el-icon>
+                </button>
               </div>
-
-              <div class="problem-card__body">
-                <div class="problem-inputs">
-                  <el-form-item :error="problem.issueTypeError" label="问题类型" required>
-                    <el-select
-                      v-model="problem.issueTypeId"
-                      :loading="group.issueTypesLoading"
-                      :disabled="!group.repairAreaId || !group.issueTypeOptions.length || submitting"
-                      placeholder="请先选择此组的报修区域"
-                      @change="problem.issueTypeError = ''"
-                    >
-                      <el-option
-                        v-for="item in group.issueTypeOptions"
-                        :key="item.value"
-                        :label="item.label"
-                        :value="item.value"
-                      />
-                    </el-select>
-                  </el-form-item>
-                  <el-form-item :error="problem.descriptionError" label="问题描述" required>
-                    <el-input
-                      v-model="problem.description"
-                      type="textarea"
-                      :rows="5"
-                      maxlength="2000"
-                      show-word-limit
-                      :disabled="submitting"
-                      placeholder="请说明故障现象、发生位置和需要协助的事项"
-                      @input="problem.descriptionError = ''"
-                    />
-                  </el-form-item>
-                  <el-form-item label="补充备注">
-                    <el-input
-                      v-model="problem.otherIssueRemark"
-                      type="textarea"
-                      :rows="3"
-                      maxlength="5000"
-                      show-word-limit
-                      :disabled="submitting"
-                      placeholder="可补充影响范围、特殊情况或其他说明"
-                    />
-                  </el-form-item>
-                </div>
-
-                <div class="photo-field" :class="{ 'is-error': problem.imageError || problem.uploadError }">
-                  <span class="photo-field__label">现场图片 <b>*</b></span>
-                  <div v-if="problem.reportImageUrl" class="photo-preview">
-                    <el-image :src="problem.reportImageUrl" fit="cover" :preview-src-list="[problem.reportImageUrl]" />
-                    <button
-                      type="button"
-                      class="photo-preview__delete"
-                      :disabled="submitting || problem.uploading"
-                      aria-label="删除现场图片"
-                      @click="clearProblemImage(problem)"
-                    >
-                      <el-icon><Delete /></el-icon>
-                    </button>
-                  </div>
-                  <label v-else class="photo-selector" :class="{ 'is-uploading': problem.uploading }">
-                    <input
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp"
-                      :disabled="submitting || problem.uploading"
-                      @change="handleImageInput(problem, $event)"
-                    />
-                    <el-icon><component :is="problem.uploading ? RefreshRight : UploadFilled" /></el-icon>
-                    <strong>{{ problem.uploading ? '正在上传图片' : '上传现场图片' }}</strong>
-                    <span>支持 JPG、PNG、WebP，最大 20 MB</span>
-                  </label>
-                  <p v-if="problem.uploadError || problem.imageError" class="photo-field__error">
-                    {{ problem.uploadError || problem.imageError }}
-                  </p>
-                </div>
-              </div>
-            </article>
+              <label v-else class="photo-selector" :class="{ 'is-uploading': problem.uploading }">
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  :disabled="submitting || problem.uploading"
+                  @change="handleImageInput(problem, $event)"
+                />
+                <el-icon><component :is="problem.uploading ? RefreshRight : UploadFilled" /></el-icon>
+                <strong>{{ problem.uploading ? '正在上传图片' : '上传现场图片' }}</strong>
+                <span>支持 JPG、PNG、WebP，最大 20 MB</span>
+              </label>
+              <p v-if="problem.uploadError || problem.imageError" class="photo-field__error">
+                {{ problem.uploadError || problem.imageError }}
+              </p>
+            </div>
           </div>
-
-          <div class="area-group__append">
-            <el-button
-              :icon="Plus"
-              :disabled="submitting || group.problems.some((problem) => problem.uploading)"
-              @click="addProblem(group)"
-            >
-              新增问题
-            </el-button>
-          </div>
-        </section>
+        </article>
       </div>
 
-      <div class="area-group-list__append">
-        <el-button :icon="Plus" :disabled="submitting || hasActiveUpload" @click="addAreaGroup">
-          新增报修区域
+      <div class="problem-list__append">
+        <el-button :icon="Plus" :disabled="submitting || hasActiveUpload" @click="addProblem">
+          新增问题
         </el-button>
       </div>
 
@@ -907,100 +814,6 @@ onMounted(async () => {
 
 .issues-heading .el-button {
   min-height: 40px;
-}
-
-.area-group-list {
-  display: grid;
-  gap: 24px;
-}
-
-.area-group {
-  padding-top: 20px;
-  border-top: 1px solid var(--color-border);
-}
-
-.area-group__heading,
-.area-group__title,
-.area-group__issues-heading {
-  display: flex;
-  align-items: center;
-}
-
-.area-group__heading {
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.area-group__title {
-  min-width: 0;
-  gap: 10px;
-  color: var(--color-text);
-  font-size: 14px;
-}
-
-.area-group__index {
-  flex: 0 0 auto;
-  padding: 4px 8px;
-  border-radius: 4px;
-  color: #31518c;
-  background: #eef4ff;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.area-group__delete {
-  width: 40px;
-  min-height: 40px;
-}
-
-.area-group__scope {
-  display: grid;
-  grid-template-columns: minmax(0, 330px) minmax(0, 1fr);
-  align-items: start;
-  gap: 18px;
-  margin-top: 14px;
-}
-
-.area-group__scope :deep(.el-form-item) {
-  margin-bottom: 0;
-}
-
-.area-group__issues-heading {
-  gap: 16px;
-  margin-top: 18px;
-  padding: 12px 0 10px;
-  border-top: 1px dashed #d4deee;
-  color: var(--color-text-secondary);
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.area-group__append,
-.area-group-list__append {
-  display: flex;
-  justify-content: center;
-}
-
-.area-group__append {
-  padding-top: 14px;
-}
-
-.area-group-list__append {
-  padding-top: 2px;
-}
-
-.area-group__append .el-button,
-.area-group-list__append .el-button {
-  width: 100%;
-  min-height: 42px;
-  border-style: dashed;
-  color: var(--color-primary);
-  background: #f7faff;
-}
-
-.area-group__append .el-button:hover,
-.area-group-list__append .el-button:hover {
-  background: var(--color-primary-soft);
 }
 
 .problem-list {
@@ -1177,6 +990,24 @@ onMounted(async () => {
   color: var(--el-color-danger);
 }
 
+.problem-list__append {
+  display: flex;
+  justify-content: center;
+  padding-top: 2px;
+}
+
+.problem-list__append .el-button {
+  width: 100%;
+  min-height: 42px;
+  border-style: dashed;
+  color: var(--color-primary);
+  background: #f7faff;
+}
+
+.problem-list__append .el-button:hover {
+  background: var(--color-primary-soft);
+}
+
 .submit-row {
   margin-top: 22px;
   padding-top: 20px;
@@ -1233,11 +1064,6 @@ onMounted(async () => {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .area-group__scope {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 4px;
-  }
-
   .problem-card__body {
     grid-template-columns: minmax(0, 1fr) 180px;
   }
@@ -1264,17 +1090,44 @@ onMounted(async () => {
     white-space: normal;
   }
 
-  .location-grid,
-  .problem-card__body {
-    grid-template-columns: 1fr;
+  .student-location {
+    padding: 10px 12px;
+    gap: 10px;
   }
 
-  .area-group__scope {
-    grid-template-columns: 1fr;
+  .student-location__icon {
+    width: 32px;
+    height: 32px;
+    font-size: 16px;
+  }
+
+  .student-location strong {
+    font-size: 13px;
+  }
+
+  .student-location .el-tag {
+    padding: 0 6px;
+    height: 22px;
+    font-size: 11px;
+  }
+
+  .location-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .problem-card__body {
+    grid-template-columns: 1fr;
     gap: 18px;
+  }
+
+  .problem-inputs :deep(.el-form-item) {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .problem-inputs :deep(.el-form-item__label) {
+    justify-content: flex-start;
+    padding: 0 0 4px;
   }
 
   .photo-field {
@@ -1287,24 +1140,13 @@ onMounted(async () => {
     min-height: 220px;
   }
 
-  .area-group__heading {
-    align-items: flex-start;
-  }
-
-  .area-group__title {
-    flex: 1 1 auto;
-    align-items: flex-start;
-  }
-
-  .area-group__delete,
   .problem-delete,
   .photo-preview__delete {
     min-width: 44px;
     min-height: 44px;
   }
 
-  .area-group__append .el-button,
-  .area-group-list__append .el-button {
+  .problem-list__append .el-button {
     min-height: 48px;
   }
 

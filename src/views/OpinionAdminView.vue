@@ -149,11 +149,10 @@ function attachmentDisplayName(file) {
 
 function openAttachmentPreview(file) {
   const source = new URL(file.url, window.location.origin)
-  // The media host may be a CDN or static-file host. The preview endpoint is
-  // an API endpoint, so it must use the configured API base URL instead.
+  const apiBaseUrl = new URL(import.meta.env.VITE_API_BASE_URL || '/api', window.location.origin)
   const previewUrl = new URL(
-    http.getUri({ url: '/media/files/preview' }),
-    window.location.origin,
+    `${apiBaseUrl.pathname.replace(/\/$/, '')}/media/files/preview`,
+    apiBaseUrl.origin,
   )
   previewUrl.searchParams.set('url', source.toString())
   attachmentPreview.value = {

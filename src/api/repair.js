@@ -8,11 +8,11 @@ export function unwrapResponse(response, fallbackMessage) {
 }
 
 export function getRepairAreas() {
-  return http.get('/repair-submissions/areas')
+  return http.get('/repair-requests/areas')
 }
 
 export function getRepairIssueTypes(areaId) {
-  return http.get(`/repair-submissions/areas/${areaId}/issue-types`)
+  return http.get(`/repair-requests/areas/${areaId}/issue-types`)
 }
 
 export function createRepairArea(data) {
@@ -53,7 +53,7 @@ function requiresLegacyProblemPayload(error) {
 }
 
 export function submitRepair(payload) {
-  return http.post('/repair-submissions', payload)
+  return http.post('/repair-requests', payload)
 }
 
 export function getMyRepairRequests(params) {
