@@ -10,6 +10,7 @@ import {
   getOpinions,
   resolveOpinion,
 } from '@/api/opinion'
+import http from '@/api/http'
 
 const rows = ref([])
 const colleges = ref([])
@@ -135,24 +136,28 @@ function openResolve(row) {
   resolveFormRef.value?.clearValidate()
 }
 
-function attachmentName(file) {
+function legacyAttachmentName(file) {
   return file?.name || file?.url?.split('/').pop() || '附件'
+}
+
+function attachmentDisplayName(file) {
+  if (file?.name) return file.name
+  let storedName = file?.url?.split('/').pop() || ''
+  try { storedName = decodeURIComponent(storedName) } catch { /* keep raw name */ }
+  return storedName || 'attachment'
 }
 
 function openAttachmentPreview(file) {
   const source = new URL(file.url, window.location.origin)
-  // Older records may contain http://localhost:8080. When the system is
-  // opened through a LAN address, localhost points at the visitor's own
-  // computer instead of the server, so use the current host in that case.
-  const useCurrentHost = source.hostname === 'localhost'
-    && !['localhost', '127.0.0.1', '::1'].includes(window.location.hostname)
-  const previewOrigin = useCurrentHost
-    ? `${window.location.protocol}//${window.location.hostname}${source.port ? `:${source.port}` : ''}`
-    : source.origin
-  const previewUrl = new URL('/api/media/files/preview', previewOrigin)
+  // The media host may be a CDN or static-file host. The preview endpoint is
+  // an API endpoint, so it must use the configured API base URL instead.
+  const previewUrl = new URL(
+    http.getUri({ url: '/media/files/preview' }),
+    window.location.origin,
+  )
   previewUrl.searchParams.set('url', source.toString())
   attachmentPreview.value = {
-    name: attachmentName(file),
+    name: attachmentDisplayName(file),
     url: previewUrl.toString(),
   }
   attachmentPreviewVisible.value = true
@@ -376,7 +381,7 @@ async function exportExcel() {
           <div class="opinion-detail__section"><h3>相关附件（{{ detail.attachments?.length || 0 }}）</h3>
             <div v-if="detail.attachments?.length" class="opinion-detail__attachments">
               <div v-for="file in detail.attachments" :key="file.id || file.url" class="opinion-detail__attachment">
-                <span :title="attachmentName(file)">{{ attachmentName(file) }}</span>
+                <span :title="attachmentDisplayName(file)">{{ attachmentDisplayName(file) }}</span>
                 <el-button type="primary" size="small" plain :icon="View" @click="openAttachmentPreview(file)">在线浏览</el-button>
               </div>
             </div>
