@@ -28,6 +28,7 @@ const fileList = ref([])
 const activeUploads = ref(0)
 const fileNames = new Map()
 const ALLOWED_EXTENSIONS = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'csv']
+const ACCEPTED_FILE_TYPES = '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv'
 
 const urls = computed(() =>
   [...new Set((props.modelValue || []).filter((url) => typeof url === 'string' && url))],
@@ -56,8 +57,13 @@ function extensionOf(filename) {
 }
 
 function beforeUpload(file) {
-  if (!ALLOWED_EXTENSIONS.includes(extensionOf(file.name))) {
-    ElMessage.error('仅支持 PDF、Office 文档、TXT 和 CSV 格式附件')
+  const extension = extensionOf(file.name)
+  if (!extension) {
+    ElMessage.error('附件格式错误：请为文件保留扩展名')
+    return false
+  }
+  if (!ALLOWED_EXTENSIONS.includes(extension)) {
+    ElMessage.error('附件格式错误：不支持 .' + extension + '，仅支持 PDF、Word、Excel、PPT、TXT、CSV')
     return false
   }
   if (file.size > props.maxSizeMb * 1024 * 1024) {
@@ -75,7 +81,7 @@ async function handleUpload({ file, onError, onSuccess }) {
     emit('update:modelValue', [...urls.value, url])
     onSuccess?.({ url })
   } catch (error) {
-    ElMessage.error(error?.message || '附件上传失败，请稍后重试')
+    ElMessage.error(error?.response?.data?.message || error?.message || '附件上传失败，请稍后重试')
     onError?.(error)
   } finally {
     activeUploads.value -= 1
@@ -97,6 +103,7 @@ function handleExceed() {
     <el-upload
       :class="{ 'attachment-upload__control--full': isFull }"
       :file-list="fileList"
+      :accept="ACCEPTED_FILE_TYPES"
       :limit="limit"
       :disabled="disabled || isUploading"
       :auto-upload="true"
@@ -112,7 +119,7 @@ function handleExceed() {
       <div class="attachment-upload__text">拖拽附件到这里，或 <em>点击选择文件</em></div>
       <template #tip>
         <p class="attachment-upload__hint">
-          支持 PDF、Word、Excel、PPT、TXT等格式，单个不超过 {{ maxSizeMb }} MB。
+          支持 PDF、Word、Excel、PPT、TXT、CSV 格式；脚本、可执行文件和宏文件不支持上传，单个不超过 {{ maxSizeMb }} MB。
         </p>
       </template>
       <template #file="{ file }">

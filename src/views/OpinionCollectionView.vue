@@ -1,9 +1,10 @@
 <script setup>
-import { ChatLineRound, CircleCheckFilled, DocumentAdd, Paperclip } from '@element-plus/icons-vue'
+import { ChatLineRound, CircleCheckFilled, DocumentAdd } from '@element-plus/icons-vue'
 import { computed, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import ImageUpload from '@/components/ImageUpload.vue'
 import OpinionAttachmentUpload from '@/components/OpinionAttachmentUpload.vue'
+import OpinionAdminView from '@/views/OpinionAdminView.vue'
 import { submitOpinion } from '@/api/opinion'
 import { ROLE_KEYS } from '@/config/access'
 import { useAuthStore } from '@/stores/auth'
@@ -24,6 +25,7 @@ const form = reactive({
 const isAdministrator = computed(() =>
   [ROLE_KEYS.SYSTEM_ADMIN, ROLE_KEYS.DORMITORY_ADMIN].includes(auth.currentRole.value),
 )
+const isStudent = computed(() => auth.currentRole.value === ROLE_KEYS.STUDENT)
 const hasActiveUpload = computed(() => imageUploading.value || attachmentUploading.value)
 const rules = {
   description: [
@@ -73,7 +75,7 @@ async function handleSubmit() {
 </script>
 
 <template>
-  <div v-if="!isAdministrator" class="opinion-page">
+  <div v-if="isStudent" class="opinion-page">
     <section class="opinion-hero" aria-labelledby="opinion-page-title">
       <div class="opinion-hero__icon" aria-hidden="true">
         <el-icon><ChatLineRound /></el-icon>
@@ -161,14 +163,15 @@ async function handleSubmit() {
     </section>
   </div>
 
+  <OpinionAdminView v-else-if="isAdministrator" />
+
   <div v-else class="opinion-admin-placeholder">
-    <section class="opinion-admin-placeholder__panel" aria-labelledby="opinion-admin-title">
-      <span class="opinion-admin-placeholder__icon" aria-hidden="true">
-        <el-icon><Paperclip /></el-icon>
-      </span>
-      <h1 id="opinion-admin-title">意见反馈处理台</h1>
-      <p>管理员查看、处理和回复学生意见的页面正在接入。</p>
-      <span>当前学生反馈提交入口已可使用。</span>
+    <section class="opinion-admin-placeholder__panel">
+      <div class="opinion-admin-placeholder__icon" aria-hidden="true">
+        <el-icon><ChatLineRound /></el-icon>
+      </div>
+      <h1>暂无访问权限</h1>
+      <p>仅学生可提交意见，系统管理员和宿管中心管理员可查看及处理反馈。</p>
     </section>
   </div>
 </template>
@@ -177,8 +180,9 @@ async function handleSubmit() {
 .opinion-page {
   display: grid;
   gap: 20px;
-  width: min(100%, 1120px);
-  margin: 0 auto;
+  box-sizing: border-box;
+  width: min(calc(100% - 24px), 1120px);
+  margin-inline: auto;
 }
 
 .opinion-hero,

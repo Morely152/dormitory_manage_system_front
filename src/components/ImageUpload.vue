@@ -39,6 +39,7 @@ const emit = defineEmits(['update:modelValue', 'uploading-change'])
 const fileList = ref([])
 const previewUrl = ref('')
 const activeUploads = ref(0)
+const ALLOWED_IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'webp']
 
 const urls = computed(() =>
   [...new Set((props.modelValue || []).filter((url) => typeof url === 'string' && url))],
@@ -62,8 +63,9 @@ watch(
 watch(isUploading, (value) => emit('uploading-change', value), { immediate: true })
 
 function beforeUpload(file) {
-  if (!file.type.startsWith('image/')) {
-    ElMessage.error('请选择图片文件')
+  const extension = file.name.includes('.') ? file.name.split('.').pop().toLowerCase() : ''
+  if (!ALLOWED_IMAGE_EXTENSIONS.includes(extension)) {
+    ElMessage.error('图片格式错误：仅支持 JPG、JPEG、PNG、WEBP 格式')
     return false
   }
 
@@ -86,7 +88,7 @@ async function handleUpload({ file, onError, onSuccess }) {
     emit('update:modelValue', [...urls.value, url])
     onSuccess?.({ url })
   } catch (error) {
-    ElMessage.error(error?.message || '图片上传失败，请稍后重试')
+    ElMessage.error(error?.response?.data?.message || error?.message || '图片上传失败，请稍后重试')
     onError?.(error)
   } finally {
     activeUploads.value -= 1
@@ -147,7 +149,7 @@ function handleExceed() {
     </el-upload>
 
     <p class="image-upload__hint">
-      支持 JPG、PNG、WEBP 格式，单张不超过 {{ maxSizeMb }} MB，最多 {{ limit }} 张。
+      支持 JPG、JPEG、PNG、WEBP 格式，单张不超过 {{ maxSizeMb }} MB，最多 {{ limit }} 张。
     </p>
 
     <el-image-viewer
