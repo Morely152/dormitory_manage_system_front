@@ -61,6 +61,11 @@ function shortDescription(value) {
   return text.length > 42 ? `${text.slice(0, 42)}…` : text
 }
 
+function formatResolutionDescription(value) {
+  const text = String(value || '').trim()
+  return text ? `${text}已处理` : '无'
+}
+
 function normalizeRow(row) {
   return {
     ...row,
@@ -319,7 +324,7 @@ async function exportExcel() {
         </el-table-column>
         <el-table-column label="处理情况说明" min-width="210" show-overflow-tooltip>
           <template #default="{ row }">
-            <span :class="{ 'opinion-empty-cell': !row.resolutionDescription }">{{ row.resolutionDescription || '无' }}</span>
+            <span :class="{ 'opinion-empty-cell': !row.resolutionDescription }">{{ formatResolutionDescription(row.resolutionDescription) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="132" fixed="right">
@@ -407,10 +412,10 @@ async function exportExcel() {
       />
     </el-dialog>
 
-    <el-dialog v-model="resolveVisible" title="填写解决情况" width="min(560px, 94vw)">
+    <el-dialog v-model="resolveVisible" title="" width="min(560px, 94vw)">
       <el-form ref="resolveFormRef" :model="resolveForm" :rules="resolveRules" label-position="top">
-        <el-form-item label="问题解决情况说明" prop="resolutionDescription" required>
-          <el-input v-model="resolveForm.resolutionDescription" type="textarea" :rows="6" maxlength="5000" show-word-limit placeholder="请说明问题处理结果、解决措施或后续安排" />
+        <el-form-item label="填写解决问题的部门" prop="resolutionDescription" required>
+          <el-input v-model="resolveForm.resolutionDescription" type="textarea" :rows="6" maxlength="5000" show-word-limit placeholder="如学工处" />
         </el-form-item>
       </el-form>
       <template #footer><el-button @click="resolveVisible = false">取消</el-button><el-button type="primary" :loading="resolving" @click="submitResolve">确认标记已处理</el-button></template>
