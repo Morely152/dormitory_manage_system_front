@@ -137,3 +137,11 @@ export function submitRepairQualityReview(workOrderId, data) {
 export function getRepairWorkOrderSummary(params) {
   return http.get('/repair-work-orders/summary', { params })
 }
+
+export function getRepairDashboard(params) {
+  return http.get('/repair/dashboard', { params })
+}
+
+export function getRepairDashboardDetails(params) {
+  return http.get('/repair/dashboard/details', { params })
+}

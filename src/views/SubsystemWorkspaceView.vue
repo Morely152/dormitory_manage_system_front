@@ -68,8 +68,8 @@ const groupedModules = computed(() => {
           class="module-card"
           :class="{ 'module-card--danger': module.tone === 'danger' }"
           :to="{ name: module.routeName }"
-          :target="module.id === 'accommodation-query' ? '_blank' : undefined"
-          :rel="module.id === 'accommodation-query' ? 'noopener noreferrer' : undefined"
+          :target="['accommodation-query', 'maintenance-dashboard'].includes(module.id) ? '_blank' : undefined"
+          :rel="['accommodation-query', 'maintenance-dashboard'].includes(module.id) ? 'noopener noreferrer' : undefined"
         >
           <span class="module-card__icon" aria-hidden="true">
             <el-icon><component :is="ElementPlusIcons[module.icon]" /></el-icon>

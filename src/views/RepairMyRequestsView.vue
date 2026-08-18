@@ -1,6 +1,9 @@
 <script setup>
+import { ref } from 'vue'
 import { Clock, List } from '@element-plus/icons-vue'
 import RepairIssueRecordsView from '@/views/RepairIssueRecordsView.vue'
+
+const activeTab = ref('active')
 </script>
 
 <template>
@@ -11,30 +14,26 @@ import RepairIssueRecordsView from '@/views/RepairIssueRecordsView.vue'
       <span>集中查看报修进度与已完成的维修记录。</span>
     </section>
 
-    <section class="repair-my-requests__section" aria-labelledby="active-repairs-title">
-      <div class="repair-my-requests__section-heading">
-        <span class="repair-my-requests__section-icon" aria-hidden="true">
-          <el-icon><List /></el-icon>
-        </span>
-        <div>
-          <h2 id="active-repairs-title">待完成报修</h2>
-          <p>查看正在受理、派单、维修或验收中的报修问题。</p>
-        </div>
-      </div>
-      <RepairIssueRecordsView embedded scope="active" personal-only />
-    </section>
+    <section class="repair-my-requests__tabs" aria-label="我的报修切换">
+      <el-tabs v-model="activeTab" stretch>
+        <el-tab-pane name="active">
+          <template #label>
+            <span class="tab-label">
+              <el-icon><List /></el-icon>待完成报修
+            </span>
+          </template>
+          <RepairIssueRecordsView embedded scope="active" personal-only />
+        </el-tab-pane>
 
-    <section class="repair-my-requests__section" aria-labelledby="history-repairs-title">
-      <div class="repair-my-requests__section-heading">
-        <span class="repair-my-requests__section-icon" aria-hidden="true">
-          <el-icon><Clock /></el-icon>
-        </span>
-        <div>
-          <h2 id="history-repairs-title">历史报修</h2>
-          <p>查看已完成或已撤销的报修问题与处理结果。</p>
-        </div>
-      </div>
-      <RepairIssueRecordsView embedded scope="history" personal-only />
+        <el-tab-pane name="history">
+          <template #label>
+            <span class="tab-label">
+              <el-icon><Clock /></el-icon>历史报修
+            </span>
+          </template>
+          <RepairIssueRecordsView embedded scope="history" personal-only />
+        </el-tab-pane>
+      </el-tabs>
     </section>
   </main>
 </template>
@@ -57,13 +56,9 @@ import RepairIssueRecordsView from '@/views/RepairIssueRecordsView.vue'
   font-weight: 650;
 }
 
-.repair-my-requests__intro h1,
-.repair-my-requests__section-heading h2 {
+.repair-my-requests__intro h1 {
   margin: 0;
   color: var(--color-text);
-}
-
-.repair-my-requests__intro h1 {
   font-size: clamp(24px, 3vw, 30px);
 }
 
@@ -75,39 +70,24 @@ import RepairIssueRecordsView from '@/views/RepairIssueRecordsView.vue'
   line-height: 1.6;
 }
 
-.repair-my-requests__section {
-  display: grid;
-  gap: 16px;
-  padding-top: 4px;
+.repair-my-requests__tabs :deep(.el-tabs__header) {
+  margin-bottom: 20px;
 }
 
-.repair-my-requests__section-heading {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
+.repair-my-requests__tabs :deep(.el-tabs__item) {
+  min-height: 56px;
+  font-size: 16px;
+  font-weight: 650;
 }
 
-.repair-my-requests__section-icon {
-  display: grid;
-  width: 36px;
-  height: 36px;
-  flex: 0 0 auto;
-  place-items: center;
-  border-radius: 6px;
-  color: var(--color-primary);
-  background: var(--color-primary-soft);
+.tab-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tab-label .el-icon {
   font-size: 18px;
-}
-
-.repair-my-requests__section-heading h2 {
-  font-size: 19px;
-}
-
-.repair-my-requests__section-heading p {
-  margin: 5px 0 0;
-  color: var(--color-text-muted);
-  font-size: 13px;
-  line-height: 1.55;
 }
 
 @media (max-width: 640px) {
@@ -115,5 +95,9 @@ import RepairIssueRecordsView from '@/views/RepairIssueRecordsView.vue'
     gap: 24px;
   }
 
+  .repair-my-requests__tabs :deep(.el-tabs__item) {
+    min-height: 48px;
+    font-size: 15px;
+  }
 }
 </style>

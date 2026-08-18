@@ -7,6 +7,7 @@ import {
   Refresh,
   Search,
   Star,
+  User,
 } from '@element-plus/icons-vue'
 import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -33,6 +34,7 @@ import {
   getIssueTypeName,
   getPriorityLabel,
   getPriorityTagType,
+  getRecordImageGroups,
   getRecordImageUrls,
   getRecordLocation,
   getRequestAreaName,
@@ -128,7 +130,6 @@ const editForm = reactive({
   repairAreaId: '',
   issueTypeId: '',
   description: '',
-  otherIssueRemark: '',
 })
 
 const satisfactionForm = reactive({
@@ -464,7 +465,6 @@ async function openEdit() {
   editForm.repairAreaId = record.repairArea?.id || record.repairAreaId || ''
   editForm.issueTypeId = record.issueType?.id || record.issueTypeId || ''
   editForm.description = getRequestDescription(record)
-  editForm.otherIssueRemark = record.otherIssueRemark || ''
   editImages.value = record.reportImageUrl ? [record.reportImageUrl] : []
   await loadIssueTypes(editForm.repairAreaId)
   editVisible.value = true
@@ -493,9 +493,6 @@ async function saveEdit() {
       issueTypeId: editForm.issueTypeId,
       description: editForm.description.trim(),
       reportImageUrl: editImages.value[0],
-    }
-    if (editForm.otherIssueRemark.trim()) {
-      payload.otherIssueRemark = editForm.otherIssueRemark.trim()
     }
     await updateRepairRequest(editForm.id, payload)
     ElMessage.success('报修问题已更新')
@@ -725,6 +722,18 @@ onActivated(() => loadRecords({ recoverEmptyPage: true }))
             <span class="repair-location"><el-icon><Location /></el-icon>{{ getRecordLocation(row) }}</span>
           </template>
         </el-table-column>
+        <el-table-column label="报修人" min-width="150">
+          <template #default="{ row }">
+            <div v-if="row.reporter?.name" class="repair-list-reporter">
+              <span class="repair-list-reporter__name"><el-icon><User /></el-icon>{{ row.reporter.name }}</span>
+              <small v-if="row.reporter.typeName || row.reporter.studentNo" class="repair-list-reporter__sub">
+                <span v-if="row.reporter.typeName">{{ row.reporter.typeName }}</span>
+                <span v-if="row.reporter.typeCode === 'STUDENT' && row.reporter.studentNo"> · {{ row.reporter.studentNo }}</span>
+              </small>
+            </div>
+            <span v-else class="repair-list-empty">—</span>
+          </template>
+        </el-table-column>
         <el-table-column label="优先级" width="100">
           <template #default="{ row }">
             <el-tag :type="getPriorityTagType(row.priorityCode)" effect="light">
@@ -737,6 +746,51 @@ onActivated(() => loadRecords({ recoverEmptyPage: true }))
             <el-tag :type="getAudienceStatusTagType(row)" effect="light">
               {{ getAudienceStatusLabel(row) }}
             </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="现场图片" width="130">
+          <template #default="{ row }">
+            <div class="repair-list-images">
+              <el-image
+                v-if="row.reportImageUrl"
+                class="repair-list-images__thumb is-report"
+                :src="row.reportImageUrl"
+                :preview-src-list="getRecordImageUrls(row)"
+                fit="cover"
+                preview-teleported
+              />
+              <span v-else class="repair-list-images__empty">还未上传</span>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="维修图片" width="130">
+          <template #default="{ row }">
+            <div class="repair-list-images">
+              <el-image
+                v-if="row.repairImageUrl"
+                class="repair-list-images__thumb is-repair"
+                :src="row.repairImageUrl"
+                :preview-src-list="getRecordImageUrls(row)"
+                fit="cover"
+                preview-teleported
+              />
+              <span v-else class="repair-list-images__empty">还未上传</span>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="验收图片" width="130">
+          <template #default="{ row }">
+            <div class="repair-list-images">
+              <el-image
+                v-if="row.acceptanceImageUrl"
+                class="repair-list-images__thumb is-acceptance"
+                :src="row.acceptanceImageUrl"
+                :preview-src-list="getRecordImageUrls(row)"
+                fit="cover"
+                preview-teleported
+              />
+              <span v-else class="repair-list-images__empty">还未上传</span>
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="报修时间" width="168">
@@ -815,8 +869,69 @@ onActivated(() => loadRecords({ recoverEmptyPage: true }))
             <h2>{{ getIssueTypeName(selectedRecord) }}</h2>
             <p class="repair-detail__meta">{{ getRequestAreaName(selectedRecord) }} · {{ formatDateTime(selectedRecord.reportedAt || selectedRecord.createdAt) }}</p>
             <p class="repair-detail__location"><el-icon><Location /></el-icon>{{ getRecordLocation(selectedRecord) }}</p>
-            <p class="repair-detail__description">{{ getRequestDescription(selectedRecord) }}</p>
+            <div v-if="selectedRecord.reporter" class="repair-detail__reporter">
+              <span class="repair-detail__reporter-label"><el-icon><User /></el-icon>报修人</span>
+              <dl>
+                <div v-if="selectedRecord.reporter.name">
+                  <dt>姓名</dt>
+                  <dd>{{ selectedRecord.reporter.name }}</dd>
+                </div>
+                <div v-if="selectedRecord.reporter.typeCode === 'STUDENT' && selectedRecord.reporter.studentNo">
+                  <dt>学号</dt>
+                  <dd>{{ selectedRecord.reporter.studentNo }}</dd>
+                </div>
+                <div v-if="selectedRecord.reporter.collegeName">
+                  <dt>学院</dt>
+                  <dd>{{ selectedRecord.reporter.collegeName }}</dd>
+                </div>
+                <div v-if="selectedRecord.reporter.className">
+                  <dt>班级</dt>
+                  <dd>{{ selectedRecord.reporter.className }}</dd>
+                </div>
+                <div v-if="selectedRecord.reporter.userCode">
+                  <dt>账号</dt>
+                  <dd>{{ selectedRecord.reporter.userCode }}</dd>
+                </div>
+                <div v-if="selectedRecord.reporter.typeName">
+                  <dt>身份</dt>
+                  <dd>{{ selectedRecord.reporter.typeName }}</dd>
+                </div>
+                <div v-if="selectedRecord.reporter.phone">
+                  <dt>联系电话</dt>
+                  <dd>{{ selectedRecord.reporter.phone }}</dd>
+                </div>
+              </dl>
+            </div>
+            <div class="repair-detail__description">
+              <span class="repair-detail__description-label">问题描述</span>
+              <p>{{ getRequestDescription(selectedRecord) }}</p>
+            </div>
             <p v-if="selectedRecord.otherIssueRemark" class="repair-detail__remark">补充说明：{{ selectedRecord.otherIssueRemark }}</p>
+          </section>
+
+          <section v-if="getRecordImageGroups(selectedRecord).length" class="repair-detail__section repair-detail__images-section">
+            <h3>图片记录</h3>
+            <div class="repair-image-group-list">
+              <div
+                v-for="group in getRecordImageGroups(selectedRecord)"
+                :key="group.key"
+                class="repair-image-group"
+              >
+                <div class="repair-image-group__heading">
+                  <el-tag :type="group.tagType" effect="dark" round size="small">{{ group.label }}</el-tag>
+                  <span class="repair-image-group__desc">{{ group.desc }}</span>
+                </div>
+                <div class="repair-image-list">
+                  <el-image
+                    v-for="imageUrl in group.urls"
+                    :key="imageUrl"
+                    :src="imageUrl"
+                    :preview-src-list="getRecordImageUrls(selectedRecord)"
+                    fit="cover"
+                  />
+                </div>
+              </div>
+            </div>
           </section>
 
           <section class="repair-detail__section repair-detail__progress-section">
@@ -836,19 +951,6 @@ onActivated(() => loadRecords({ recoverEmptyPage: true }))
                 :description="step.time ? formatDateTime(step.time) : step.state === 'current' ? '当前处理环节' : '尚未进入'"
               />
             </el-steps>
-          </section>
-
-          <section v-if="getRecordImageUrls(selectedRecord).length" class="repair-detail__section">
-            <h3>现场与处理图片</h3>
-            <div class="repair-image-list">
-              <el-image
-                v-for="imageUrl in getRecordImageUrls(selectedRecord)"
-                :key="imageUrl"
-                :src="imageUrl"
-                :preview-src-list="getRecordImageUrls(selectedRecord)"
-                fit="cover"
-              />
-            </div>
           </section>
 
           <section v-if="selectedRecord.workOrder" class="repair-detail__section repair-detail__work-order">
@@ -896,9 +998,6 @@ onActivated(() => loadRecords({ recoverEmptyPage: true }))
         </div>
         <el-form-item label="问题描述" required>
           <el-input v-model="editForm.description" type="textarea" :rows="4" maxlength="2000" show-word-limit />
-        </el-form-item>
-        <el-form-item label="补充说明">
-          <el-input v-model="editForm.otherIssueRemark" type="textarea" :rows="3" maxlength="5000" show-word-limit />
         </el-form-item>
         <el-form-item label="现场图片" required>
           <ImageUpload v-model="editImages" :limit="1" :max-size-mb="20" purpose="REPAIR_PHOTO" visibility="PUBLIC" />
@@ -1133,13 +1232,76 @@ onActivated(() => loadRecords({ recoverEmptyPage: true }))
   font-size: 13px;
 }
 
-.repair-detail__description,
+.repair-detail__reporter {
+  margin: 14px 0 0;
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.repair-detail__reporter-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-primary);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.repair-detail__reporter-label .el-icon {
+  font-size: 15px;
+}
+
+.repair-detail__reporter dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px 18px;
+  margin: 12px 0 0;
+}
+
+.repair-detail__reporter dl > div {
+  min-width: 0;
+}
+
+.repair-detail__reporter dt {
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.repair-detail__reporter dd {
+  margin: 4px 0 0;
+  color: var(--color-text);
+  font-size: 14px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.repair-detail__description {
+  margin: 14px 0 0;
+  padding: 14px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.repair-detail__description-label {
+  display: inline-flex;
+  align-items: center;
+  color: var(--color-primary);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.repair-detail__description p,
 .repair-detail__remark,
 .repair-detail__notice p {
-  margin: 14px 0 0;
-  color: var(--color-text-secondary);
-  line-height: 1.7;
+  margin: 10px 0 0;
+  color: var(--color-text);
+  font-size: 15px;
+  line-height: 1.75;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .repair-detail__remark {
@@ -1153,11 +1315,28 @@ onActivated(() => loadRecords({ recoverEmptyPage: true }))
 }
 
 .repair-detail__progress-section {
+  padding: 22px 20px 26px;
   background: #f8faff;
 }
 
 .repair-progress {
-  margin-top: 16px;
+  margin-top: 18px;
+  min-height: 240px;
+}
+
+.repair-progress :deep(.el-step) {
+  flex-basis: auto !important;
+  padding-bottom: 26px;
+  min-height: 56px;
+}
+
+.repair-progress :deep(.el-step:last-child) {
+  padding-bottom: 0;
+  min-height: auto;
+}
+
+.repair-progress :deep(.el-step__line) {
+  left: 11px;
 }
 
 .repair-progress :deep(.el-step__title) {
@@ -1186,6 +1365,88 @@ onActivated(() => loadRecords({ recoverEmptyPage: true }))
   height: 84px;
   overflow: hidden;
   border-radius: 6px;
+}
+
+.repair-image-group-list {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin-top: 6px;
+}
+
+.repair-image-group__heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.repair-image-group__desc {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.repair-list-reporter {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.repair-list-reporter__name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.repair-list-reporter__sub {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  margin: 0;
+}
+
+.repair-list-empty {
+  color: var(--color-text-placeholder);
+  font-size: 13px;
+}
+
+.repair-list-images {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.repair-list-images__thumb {
+  width: 96px;
+  height: 72px;
+  border-radius: 6px;
+  border: 2px solid transparent;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.repair-list-images__thumb.is-report {
+  border-color: var(--el-color-danger-light-7);
+}
+
+.repair-list-images__thumb.is-repair {
+  border-color: var(--el-color-warning-light-7);
+}
+
+.repair-list-images__thumb.is-acceptance {
+  border-color: var(--el-color-success-light-7);
+}
+
+.repair-list-images :deep(.el-image__inner) {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.repair-list-images__empty {
+  color: var(--color-text-placeholder);
+  font-size: 12px;
 }
 
 :global(.repair-detail-dialog) {
@@ -1384,6 +1645,14 @@ onActivated(() => loadRecords({ recoverEmptyPage: true }))
     flex: 1 1 100%;
     min-height: 44px;
     margin-left: 0;
+  }
+
+  .repair-detail__reporter dl {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .repair-detail__progress-section {
+    padding: 18px 16px 20px;
   }
 }
 </style>

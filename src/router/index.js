@@ -22,6 +22,7 @@ const implementedComponents = {
   'maintenance-workbench': () => import('@/views/RepairWorkbenchView.vue'),
   'maintenance-work-orders': () => import('@/views/RepairWorkOrderHubView.vue'),
   'maintenance-reports': () => import('@/views/RepairReportHubView.vue'),
+  'maintenance-dashboard': () => import('@/views/RepairDashboardView.vue'),
   'maintenance-operation-log': () => import('@/views/RepairOperationLogView.vue'),
   'repair-application': () => import('@/views/RepairApplicationView.vue'),
   'repair-my-requests': () => import('@/views/RepairMyRequestsView.vue'),
@@ -48,7 +49,7 @@ const businessRoutes = ACCESS_MODULES.map((module) => ({
     title: module.title,
     moduleId: module.id,
     subsystemId: module.subsystem,
-    fullscreen: ['accommodation-query', 'bed-allocation-new'].includes(module.id),
+    fullscreen: ['accommodation-query', 'bed-allocation-new', 'maintenance-dashboard'].includes(module.id),
   },
 }))
 

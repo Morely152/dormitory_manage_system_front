@@ -165,3 +165,30 @@ export function getRecordImageUrls(record) {
     record?.acceptanceImageUrl,
   ].filter(Boolean)
 }
+
+export function getRecordImageGroups(record) {
+  const groups = [
+    {
+      key: 'report',
+      label: '现场图片',
+      desc: '问题上报时拍摄',
+      tagType: 'danger',
+      urls: [record?.reportImageUrl].filter(Boolean),
+    },
+    {
+      key: 'repair',
+      label: '维修图片',
+      desc: '维修完成后拍摄',
+      tagType: 'warning',
+      urls: [record?.repairImageUrl].filter(Boolean),
+    },
+    {
+      key: 'acceptance',
+      label: '验收图片',
+      desc: '质量验收时拍摄',
+      tagType: 'success',
+      urls: [record?.acceptanceImageUrl].filter(Boolean),
+    },
+  ]
+  return groups.filter(g => g.urls.length > 0)
+}
