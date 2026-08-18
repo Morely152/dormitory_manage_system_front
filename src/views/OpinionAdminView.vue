@@ -141,15 +141,11 @@ function attachmentName(file) {
 
 function openAttachmentPreview(file) {
   const source = new URL(file.url, window.location.origin)
-  // Older records may contain http://localhost:8080. When the system is
-  // opened through a LAN address, localhost points at the visitor's own
-  // computer instead of the server, so use the current host in that case.
-  const useCurrentHost = source.hostname === 'localhost'
-    && !['localhost', '127.0.0.1', '::1'].includes(window.location.hostname)
-  const previewOrigin = useCurrentHost
-    ? `${window.location.protocol}//${window.location.hostname}${source.port ? `:${source.port}` : ''}`
-    : source.origin
-  const previewUrl = new URL('/api/media/files/preview', previewOrigin)
+  const apiBaseUrl = new URL(import.meta.env.VITE_API_BASE_URL || '/api', window.location.origin)
+  const previewUrl = new URL(
+    `${apiBaseUrl.pathname.replace(/\/$/, '')}/media/files/preview`,
+    apiBaseUrl.origin,
+  )
   previewUrl.searchParams.set('url', source.toString())
   attachmentPreview.value = {
     name: attachmentName(file),
