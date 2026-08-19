@@ -1,14 +1,20 @@
 <script setup>
 import { ArrowDown, House, SwitchButton } from '@element-plus/icons-vue'
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import NotificationBell from '@/components/NotificationBell.vue'
 import { getSubsystem } from '@/config/access'
 import { useAuthStore } from '@/stores/auth'
+import { useNotificationStore } from '@/stores/notifications'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const notificationStore = useNotificationStore()
 const subsystem = computed(() => getSubsystem(route.meta.subsystemId))
+
+onMounted(() => notificationStore.startPolling())
+onBeforeUnmount(() => notificationStore.stopPolling())
 
 function handleCommand(command) {
   if (command === 'portal') {
@@ -16,6 +22,7 @@ function handleCommand(command) {
   }
 
   if (command === 'logout') {
+    notificationStore.stopPolling()
     auth.logout()
     router.replace({ name: 'Login' })
   }
@@ -36,6 +43,7 @@ function handleCommand(command) {
       </RouterLink>
 
       <div class="header-user">
+        <NotificationBell />
         <span class="header-user__role">{{ auth.roleInfo.value?.label }}</span>
         <el-dropdown trigger="click" @command="handleCommand">
           <button class="user-menu" type="button" aria-label="打开用户菜单">

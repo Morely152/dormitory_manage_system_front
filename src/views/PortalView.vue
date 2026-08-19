@@ -4,9 +4,31 @@ import { computed } from 'vue'
 import { ArrowRight } from '@element-plus/icons-vue'
 import { getSubsystemsForRole } from '@/config/access'
 import { useAuthStore } from '@/stores/auth'
+import { useNotificationStore } from '@/stores/notifications'
 
 const auth = useAuthStore()
+const notificationStore = useNotificationStore()
 const subsystems = computed(() => getSubsystemsForRole(auth.currentRole.value))
+
+function subsystemTodoCount(subsystem) {
+  const taskPaths = new Set([
+    '/bed/applications/change/review',
+    '/maintenance/work-orders/create',
+    '/maintenance/work-orders/create?tab=pending-review',
+    '/maintenance/work-orders/pending-review',
+    '/maintenance/work-orders/dispatch',
+    '/maintenance/work-orders/review',
+    '/maintenance/work-orders/acceptance',
+    '/opinion-collection',
+  ])
+  return Object.entries(notificationStore.state.actionCounts).reduce((total, [path, count]) => (
+    taskPaths.has(path) && (
+      (subsystem.id === 'bed' && path.startsWith('/bed/'))
+      || (subsystem.id === 'maintenance' && path.startsWith('/maintenance/'))
+      || (subsystem.id === 'opinion-collection' && path === '/opinion-collection')
+    ) ? total + Number(count || 0) : total
+  ), 0)
+}
 </script>
 
 <template>
@@ -36,6 +58,9 @@ const subsystems = computed(() => getSubsystemsForRole(auth.currentRole.value))
         >
           <span class="system-card__icon" aria-hidden="true">
             <el-icon><component :is="ElementPlusIcons[subsystem.icon]" /></el-icon>
+          </span>
+          <span v-if="subsystemTodoCount(subsystem)" class="system-card__badge" aria-label="待办数量">
+            {{ subsystemTodoCount(subsystem) > 99 ? '99+' : subsystemTodoCount(subsystem) }}
           </span>
           <span class="system-card__content">
             <strong>{{ subsystem.title }}</strong>

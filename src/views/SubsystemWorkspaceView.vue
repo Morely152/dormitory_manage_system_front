@@ -5,9 +5,11 @@ import { ArrowRight } from '@element-plus/icons-vue'
 import { getModulesForRole, getSubsystem } from '@/config/access'
 import { useAuthStore } from '@/stores/auth'
 import { useRoute } from 'vue-router'
+import { useNotificationStore } from '@/stores/notifications'
 
 const route = useRoute()
 const auth = useAuthStore()
+const notificationStore = useNotificationStore()
 const subsystem = computed(() => getSubsystem(route.meta.subsystemId))
 const modules = computed(() => getModulesForRole(auth.currentRole.value, subsystem.value?.id))
 const groupedModules = computed(() => {
@@ -34,6 +36,23 @@ const groupedModules = computed(() => {
     }))
     .sort((left, right) => left.order - right.order)
 })
+
+function moduleTodoCount(module) {
+  const taskModuleIds = new Set([
+    'change-review',
+    'repair-work-order-management',
+    'repair-work-order-dispatch',
+    'repair-work-order-review',
+    'repair-work-order-acceptance',
+  ])
+  if (!taskModuleIds.has(module.id)) return 0
+  if (module.id !== 'repair-work-order-management') return notificationStore.actionCountFor(module.path)
+  return [
+    '/maintenance/work-orders/create',
+    '/maintenance/work-orders/create?tab=pending-review',
+    '/maintenance/work-orders/pending-review',
+  ].reduce((total, path) => total + notificationStore.actionCountFor(path), 0)
+}
 </script>
 
 <template>
@@ -73,6 +92,9 @@ const groupedModules = computed(() => {
         >
           <span class="module-card__icon" aria-hidden="true">
             <el-icon><component :is="ElementPlusIcons[module.icon]" /></el-icon>
+          </span>
+          <span v-if="moduleTodoCount(module)" class="module-card__badge" aria-label="待办数量">
+            {{ moduleTodoCount(module) > 99 ? '99+' : moduleTodoCount(module) }}
           </span>
           <span class="module-card__content">
             <strong>{{ module.title }}</strong>

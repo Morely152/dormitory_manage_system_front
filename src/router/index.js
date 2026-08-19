@@ -26,15 +26,15 @@ const implementedComponents = {
   'repair-application': () => import('@/views/RepairApplicationView.vue'),
   'repair-my-requests': () => import('@/views/RepairMyRequestsView.vue'),
   'repair-issue-records': () => import('@/views/RepairIssueRecordsView.vue'),
-  'repair-work-order-create': () => import('@/views/RepairWorkOrderCreateView.vue'),
+  'repair-work-order-management': () => import('@/views/RepairWorkOrderManagementView.vue'),
   'repair-history': () => import('@/views/RepairHistoryView.vue'),
-  'repair-work-order-pending-review': () => import('@/views/RepairWorkOrderPendingReviewView.vue'),
   'repair-work-order-review': () => import('@/views/RepairWorkOrderReviewView.vue'),
   'repair-work-order-dispatch': () => import('@/views/RepairWorkOrderDispatchView.vue'),
   'repair-work-order-pending': () => import('@/views/RepairWorkOrderPendingView.vue'),
   'repair-work-order-acceptance': () => import('@/views/RepairWorkOrderAcceptanceView.vue'),
   'repair-work-order-records': () => import('@/views/RepairWorkOrderRecordsView.vue'),
   'repair-dictionary': () => import('@/views/RepairDictionaryView.vue'),
+  'notification-announcement': () => import('@/views/NotificationAnnouncementView.vue'),
 }
 
 const businessRoutes = ACCESS_MODULES.map((module) => ({
@@ -88,6 +88,12 @@ const router = createRouter({
           name: 'Portal',
           component: () => import('@/views/PortalView.vue'),
           meta: { requiresAuth: true, title: '系统入口' },
+        },
+        {
+          path: 'notifications',
+          name: 'NotificationCenter',
+          component: () => import('@/views/NotificationCenterView.vue'),
+          meta: { requiresAuth: true, title: '通知中心' },
         },
         ...subsystemRoutes,
         ...businessRoutes,

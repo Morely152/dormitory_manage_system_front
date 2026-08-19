@@ -1,16 +1,22 @@
 <script setup>
 import { ArrowDown, CircleCheck, SwitchButton, View } from '@element-plus/icons-vue'
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import NotificationBell from '@/components/NotificationBell.vue'
 import { useAuthStore } from '@/stores/auth'
+import { useNotificationStore } from '@/stores/notifications'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const notificationStore = useNotificationStore()
 const mainRef = ref()
 
 const displayName = computed(() => auth.currentUser.value?.name || '同学')
 const avatarText = computed(() => displayName.value.slice(0, 1))
+
+onMounted(() => notificationStore.startPolling())
+onBeforeUnmount(() => notificationStore.stopPolling())
 
 const navigation = [
   {
@@ -34,6 +40,7 @@ watch(
 )
 
 function logout() {
+  notificationStore.stopPolling()
   auth.logout()
   router.replace({ name: 'Login' })
 }
@@ -70,7 +77,9 @@ function logout() {
           </RouterLink>
         </nav>
 
-        <el-dropdown class="student-user-dropdown" trigger="click" @command="logout">
+        <div class="student-header__tools">
+          <NotificationBell />
+          <el-dropdown class="student-user-dropdown" trigger="click" @command="logout">
           <button class="student-user" type="button" aria-label="打开用户菜单">
             <span class="student-user__avatar" aria-hidden="true">{{ avatarText }}</span>
             <span class="student-user__name">{{ displayName }}</span>
@@ -84,7 +93,8 @@ function logout() {
               </el-dropdown-item>
             </el-dropdown-menu>
           </template>
-        </el-dropdown>
+          </el-dropdown>
+        </div>
       </div>
     </header>
 
@@ -218,6 +228,13 @@ function logout() {
 
 .student-user-dropdown {
   justify-self: end;
+}
+
+.student-header__tools {
+  display: flex;
+  align-items: center;
+  justify-self: end;
+  gap: 8px;
 }
 
 .student-user__avatar {
