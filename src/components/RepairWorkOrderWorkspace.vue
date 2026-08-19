@@ -79,6 +79,13 @@ const managerRole = computed(() =>
     auth.currentRole.value,
   ),
 )
+const canFilterAcrossLocations = computed(() =>
+  [ROLE_KEYS.DORMITORY_ADMIN, ROLE_KEYS.SYSTEM_ADMIN].includes(auth.currentRole.value),
+)
+const showLocationFilters = computed(() =>
+  canFilterAcrossLocations.value ||
+  (managerRole.value && !['review', 'dispatch'].includes(props.mode)),
+)
 const canDispatchOrder = computed(() =>
   [ROLE_KEYS.SYSTEM_ADMIN, ROLE_KEYS.ZONE_MANAGER].includes(auth.currentRole.value),
 )
@@ -890,20 +897,20 @@ onActivated(async () => {
               <el-option v-for="item in WORK_ORDER_TYPE_OPTIONS" :key="item.value" :label="item.label" :value="item.value" />
             </el-select>
           </el-form-item>
-          <el-form-item label="派单时间">
+          <el-form-item label="建单时间">
             <el-date-picker v-model="filters.dateRange" type="daterange" value-format="YYYY-MM-DDTHH:mm:ss" range-separator="至" start-placeholder="开始日期" end-placeholder="结束日期" @change="handleSearch" />
           </el-form-item>
-          <el-form-item v-if="managerRole" label="校区">
+          <el-form-item v-if="showLocationFilters" label="校区">
             <el-select v-model="filters.campusId" clearable placeholder="全部校区" @change="(val) => { handleCampusChange(val); handleSearch() }">
               <el-option v-for="item in campusOptions" :key="item.value" :label="item.label" :value="item.value" />
             </el-select>
           </el-form-item>
-          <el-form-item v-if="managerRole" label="苑区">
+          <el-form-item v-if="showLocationFilters" label="苑区">
             <el-select v-model="filters.zoneId" clearable placeholder="全部苑区" :disabled="!filters.campusId" @change="(val) => { handleZoneChange(val); handleSearch() }">
               <el-option v-for="item in zoneOptions" :key="item.value" :label="item.label" :value="item.value" />
             </el-select>
           </el-form-item>
-          <el-form-item v-if="managerRole" label="楼栋">
+          <el-form-item v-if="showLocationFilters" label="楼栋">
             <el-select v-model="filters.buildingId" clearable placeholder="全部楼栋" :disabled="!filters.zoneId" @change="handleSearch">
               <el-option v-for="item in buildingOptions" :key="item.value" :label="item.label" :value="item.value" />
             </el-select>
