@@ -723,6 +723,13 @@ async function saveQualityReview() {
     return
   }
 
+  const missingAcceptanceImage = selectedOrder.value?.workOrderTypeCode === 'TEAM'
+    && qualityItems.value.find((item) => item.passed && !item.acceptanceImageUrls[0])
+  if (missingAcceptanceImage) {
+    ElMessage.warning('验收通过的问题必须上传验收图片')
+    return
+  }
+
   saving.value = true
   try {
     await submitRepairQualityReview(selectedOrder.value.id, {
@@ -1047,13 +1054,13 @@ onActivated(async () => {
     </el-dialog>
 
     <el-dialog v-model="repairDialogVisible" class="repair-form-dialog" title="提交维修结果" width="min(760px, calc(100% - 32px))" destroy-on-close>
-      <div class="repair-result-list"><article v-for="item in repairItems" :key="item.requestId" :class="{ 'is-unselected': !item.selected }"><el-checkbox v-model="item.selected"><strong>{{ item.label }}</strong></el-checkbox><ImageUpload v-if="item.selected" v-model="item.repairImageUrls" :limit="1" purpose="REPAIR_PHOTO" visibility="PUBLIC" /></article></div>
+      <div class="repair-result-list"><article v-for="item in repairItems" :key="item.requestId" :class="{ 'is-unselected': !item.selected }"><el-checkbox v-model="item.selected"><strong>{{ item.label }}</strong></el-checkbox><span v-if="item.selected" class="work-order-field-hint">维修结果图片（必填）</span><ImageUpload v-if="item.selected" v-model="item.repairImageUrls" :limit="1" purpose="REPAIR_PHOTO" visibility="PUBLIC" /></article></div>
       <div v-if="repairCoversAll" class="repair-result-total"><el-form label-position="top"><el-form-item label="实际总费用"><el-input-number v-model="repairForm.actualCost" :min="0" :precision="2" :step="50" controls-position="right" /><span class="work-order-field-hint">全部问题完成后可填写实际总费用。</span></el-form-item><el-form-item label="工单维修留证图"><ImageUpload v-model="repairImages" :limit="1" purpose="REPAIR_PHOTO" visibility="PUBLIC" /></el-form-item></el-form></div>
       <template #footer><el-button @click="repairDialogVisible = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveRepairResults">提交维修结果</el-button></template>
     </el-dialog>
 
     <el-dialog v-model="qualityDialogVisible" class="repair-form-dialog" title="提交验收结果" width="min(760px, calc(100% - 32px))" destroy-on-close>
-      <div class="quality-list"><article v-for="item in qualityItems" :key="item.requestId"><h3>{{ item.label }}</h3><el-radio-group v-model="item.passed"><el-radio :value="true">验收通过</el-radio><el-radio :value="false">需要返修</el-radio></el-radio-group><el-form v-if="item.passed" label-position="top"><el-form-item label="验收图片"><ImageUpload v-model="item.acceptanceImageUrls" :limit="1" purpose="REPAIR_PHOTO" visibility="PUBLIC" /></el-form-item></el-form><el-form v-else label-position="top"><el-form-item label="返修原因" required><el-input v-model="item.reworkReason" type="textarea" :rows="3" maxlength="255" show-word-limit placeholder="请说明未通过验收的具体原因" /></el-form-item></el-form></article></div>
+      <div class="quality-list"><article v-for="item in qualityItems" :key="item.requestId"><h3>{{ item.label }}</h3><el-radio-group v-model="item.passed"><el-radio :value="true">验收通过</el-radio><el-radio :value="false">需要返修</el-radio></el-radio-group><el-form v-if="item.passed" label-position="top"><el-form-item :label="selectedOrder?.workOrderTypeCode === 'TEAM' ? '验收图片（必填）' : '验收图片'" :required="selectedOrder?.workOrderTypeCode === 'TEAM'"><ImageUpload v-model="item.acceptanceImageUrls" :limit="1" purpose="REPAIR_PHOTO" visibility="PUBLIC" /></el-form-item></el-form><el-form v-else label-position="top"><el-form-item label="返修原因" required><el-input v-model="item.reworkReason" type="textarea" :rows="3" maxlength="255" show-word-limit placeholder="请说明未通过验收的具体原因" /></el-form-item></el-form></article></div>
       <template #footer><el-button @click="qualityDialogVisible = false">取消</el-button><el-button type="primary" :loading="saving" @click="saveQualityReview">提交验收结果</el-button></template>
     </el-dialog>
   </div>
