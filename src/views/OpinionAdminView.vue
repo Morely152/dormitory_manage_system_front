@@ -10,7 +10,7 @@ import {
   getOpinions,
   resolveOpinion,
 } from '@/api/opinion'
-import http from '@/api/http'
+import { useNotificationStore } from '@/stores/notifications'
 
 const notificationStore = useNotificationStore()
 const rows = ref([])
