@@ -20,7 +20,6 @@ const implementedComponents = {
   'bed-allocation': () => import('@/views/BedAllocationView.vue'),
   'bed-allocation-new': () => import('@/views/BedAllocationNewView.vue'),
   'maintenance-workbench': () => import('@/views/RepairWorkbenchView.vue'),
-  'maintenance-work-orders': () => import('@/views/RepairWorkOrderHubView.vue'),
   'maintenance-reports': () => import('@/views/RepairReportHubView.vue'),
   'maintenance-dashboard': () => import('@/views/RepairDashboardView.vue'),
   'maintenance-operation-log': () => import('@/views/RepairOperationLogView.vue'),

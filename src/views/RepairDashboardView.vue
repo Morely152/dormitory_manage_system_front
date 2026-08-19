@@ -125,7 +125,6 @@ const summary = ref({
   inProgressCount: 0,
   completedCount: 0,
   cancelledCount: 0,
-  unacceptedCount: 0,
   reworkCount: 0,
   completionRate: 0,
   satisfactionRate: 0,
@@ -585,13 +584,6 @@ onBeforeUnmount(() => {
         <span>返修数</span>
         <div class="dashboard-metric-value">
           <strong>{{ summary.reworkCount }}</strong>
-          <small>单</small>
-        </div>
-      </div>
-      <div class="dashboard-metric">
-        <span>未接单</span>
-        <div class="dashboard-metric-value">
-          <strong>{{ summary.unacceptedCount }}</strong>
           <small>单</small>
         </div>
       </div>
