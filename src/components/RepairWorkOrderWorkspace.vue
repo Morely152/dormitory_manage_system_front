@@ -158,6 +158,7 @@ const pageConfigs = Object.freeze({
     title: '待处理工单',
     description: '处理分配给当前维修账号的工单并提交维修结果。',
     worker: true,
+    statuses: ['REPAIRING', 'REWORK_REQUIRED'],
   },
   records: {
     eyebrow: '工单管理',
@@ -245,6 +246,7 @@ const displayedStatusOptions = computed(() => {
   if (!config.value.statuses) return WORK_ORDER_STATUSES
   return WORK_ORDER_STATUSES.filter((item) => config.value.statuses.includes(item.value))
 })
+const statusFilterClearable = computed(() => props.mode === 'pending' || !config.value.statuses)
 
 const activeRepairItems = computed(() =>
   repairItems.value.filter((item) => item.selected),
@@ -260,6 +262,7 @@ function getQueryParams() {
   const params = {
     statusCode: filters.statusCode || undefined,
     workOrderTypeCode: filters.workOrderTypeCode || undefined,
+    processingOnly: props.mode === 'pending' || undefined,
     page: filters.page,
     pageSize: filters.pageSize,
   }
@@ -279,7 +282,7 @@ function getQueryParams() {
 }
 
 function initStatusFilter() {
-  filters.statusCode = config.value.statuses?.[0] || ''
+  filters.statusCode = props.mode === 'pending' ? '' : config.value.statuses?.[0] || ''
 }
 
 async function loadOrders({ recoverEmptyPage = false } = {}) {
@@ -751,7 +754,7 @@ function handleSearch() {
 }
 
 function handleReset() {
-  filters.statusCode = config.value.statuses?.[0] || ''
+  initStatusFilter()
   filters.workOrderTypeCode = ''
   filters.dateRange = []
   filters.campusId = ''
@@ -888,11 +891,11 @@ onActivated(async () => {
       <section class="work-order-filter-card" aria-label="工单筛选">
         <el-form inline @submit.prevent="handleSearch">
           <el-form-item v-if="mode !== 'review'" label="处理状态">
-            <el-select v-model="filters.statusCode" :clearable="!config.statuses" placeholder="全部状态" @change="handleSearch">
+            <el-select v-model="filters.statusCode" :clearable="statusFilterClearable" placeholder="全部状态" @change="handleSearch">
               <el-option v-for="item in displayedStatusOptions" :key="item.value" :label="item.label" :value="item.value" />
             </el-select>
           </el-form-item>
-          <el-form-item label="工单类型">
+          <el-form-item v-if="mode !== 'pending'" label="工单类型">
             <el-select v-model="filters.workOrderTypeCode" clearable placeholder="全部类型" @change="handleSearch">
               <el-option v-for="item in WORK_ORDER_TYPE_OPTIONS" :key="item.value" :label="item.label" :value="item.value" />
             </el-select>
