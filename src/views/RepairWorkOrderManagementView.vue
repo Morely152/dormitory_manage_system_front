@@ -74,13 +74,13 @@ watch(activePanel, (panel) => {
     <section class="work-order-management-page__heading" aria-labelledby="work-order-management-title">
       <div>
         <p>工单流转</p>
-        <h1 id="work-order-management-title">工单创建与待审核</h1>
+        <h1 id="work-order-management-title">工单创建</h1>
         <span>通过顶部导航在创建工单和查看待审核工单之间切换。</span>
       </div>
     </section>
 
     <section class="work-order-management-page__content" aria-label="工单创建与待审核">
-      <el-tabs v-model="activePanel" class="work-order-management-tabs">
+      <el-tabs v-model="activePanel" class="work-order-management-tabs" stretch>
         <el-tab-pane name="create">
           <template #label>
             <el-badge :hidden="!panelTodoCount(PANELS.create)" :value="panelTodoCount(PANELS.create)">

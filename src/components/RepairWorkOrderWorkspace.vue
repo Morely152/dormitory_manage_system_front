@@ -49,6 +49,7 @@ import {
   unwrapRepairResponse,
 } from '@/features/repair/repairHelpers'
 import { useAuthStore } from '@/stores/auth'
+import { useNotificationStore } from '@/stores/notifications'
 
 const props = defineProps({
   mode: {
@@ -63,6 +64,7 @@ const props = defineProps({
 const emit = defineEmits(['updated'])
 
 const auth = useAuthStore()
+const notificationStore = useNotificationStore()
 const systemAdminRole = computed(() => auth.currentRole.value === ROLE_KEYS.SYSTEM_ADMIN)
 const repairAccountRole = computed(() =>
   [ROLE_KEYS.REPAIR_WORKER, ROLE_KEYS.REPAIR_TEAM].includes(auth.currentRole.value),
@@ -470,6 +472,7 @@ async function saveOrder() {
       selectedPendingIds.value = []
       orderDialogVisible.value = false
       await refreshPage({ recoverEmptyPage: true })
+      await notificationStore.refresh()
       if (created?.id) await openDetail({ id: created.id })
       emit('updated')
     } else {
@@ -478,6 +481,7 @@ async function saveOrder() {
       await refreshSelectedOrder()
       orderDialogVisible.value = false
       await refreshPage({ recoverEmptyPage: true })
+      await notificationStore.refresh()
       emit('updated')
     }
   } catch (error) {
@@ -495,6 +499,7 @@ async function resubmitOrder() {
     ElMessage.success('工单已重新提交审核')
     await openDetail(selectedOrder.value)
     await refreshPage()
+    await notificationStore.refresh()
     emit('updated')
   } catch (error) {
     if (await recoverFromDataConflict(error)) return
@@ -521,6 +526,7 @@ async function removeOrder() {
     ElMessage.success('工单已作废')
     detailVisible.value = false
     await refreshPage({ recoverEmptyPage: true })
+    await notificationStore.refresh()
     emit('updated')
   } catch (error) {
     if (await recoverFromDataConflict(error)) return
@@ -551,6 +557,7 @@ async function saveReview() {
     reviewDialogVisible.value = false
     await openDetail(selectedOrder.value)
     await refreshPage()
+    await notificationStore.refresh()
   } catch (error) {
     if (await recoverFromDataConflict(error)) return
     ElMessage.error(requestErrorMessage(error, '工单审核失败'))
@@ -611,6 +618,7 @@ async function saveAssignment() {
     assignmentDialogVisible.value = false
     await openDetail(selectedOrder.value)
     await refreshPage()
+    await notificationStore.refresh()
   } catch (error) {
     if (await recoverFromDataConflict(error)) return
     ElMessage.error(requestErrorMessage(error, '派发工单失败'))
@@ -671,6 +679,7 @@ async function saveRepairResults() {
     repairDialogVisible.value = false
     await openDetail(selectedOrder.value)
     await refreshPage()
+    await notificationStore.refresh()
   } catch (error) {
     if (await recoverFromDataConflict(error)) return
     ElMessage.error(requestErrorMessage(error, '提交维修结果失败'))
@@ -720,6 +729,7 @@ async function saveQualityReview() {
     qualityDialogVisible.value = false
     await openDetail(selectedOrder.value)
     await refreshPage()
+    await notificationStore.refresh()
   } catch (error) {
     if (await recoverFromDataConflict(error)) return
     ElMessage.error(requestErrorMessage(error, '提交质检结果失败'))

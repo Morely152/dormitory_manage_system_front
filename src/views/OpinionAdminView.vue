@@ -10,7 +10,9 @@ import {
   getOpinions,
   resolveOpinion,
 } from '@/api/opinion'
+import { useNotificationStore } from '@/stores/notifications'
 
+const notificationStore = useNotificationStore()
 const rows = ref([])
 const colleges = ref([])
 const tableLoading = ref(false)
@@ -167,6 +169,7 @@ async function submitResolve() {
     ElMessage.success('意见已标记为已处理')
     resolveVisible.value = false
     await loadRows()
+    await notificationStore.refresh()
   } catch (error) {
     ElMessage.error(requestErrorMessage(error, '意见处理失败'))
   } finally {

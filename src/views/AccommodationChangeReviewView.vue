@@ -6,7 +6,9 @@ import {
   getPendingAccommodationChangeRecords,
   reviewAccommodationExchangeApplication,
 } from '@/api/accommodationChangeReview'
+import { useNotificationStore } from '@/stores/notifications'
 
+const notificationStore = useNotificationStore()
 const loading = ref(false)
 const reviewingKey = ref('')
 const records = ref([])
@@ -122,6 +124,7 @@ async function reviewRecord(approved, record) {
     }), `${action}住宿变更申请失败`)
     ElMessage.success(`住宿变更申请已${action}`)
     await loadRecords()
+    await notificationStore.refresh()
   } catch (error) {
     ElMessage.error(requestErrorMessage(error, `${action}住宿变更申请失败`))
   } finally {
