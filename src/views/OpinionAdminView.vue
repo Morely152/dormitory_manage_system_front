@@ -10,7 +10,7 @@ import {
   getOpinions,
   resolveOpinion,
 } from '@/api/opinion'
-import { useNotificationStore } from '@/stores/notifications'
+import http from '@/api/http'
 
 const notificationStore = useNotificationStore()
 const rows = ref([])
@@ -60,6 +60,11 @@ function shortDescription(value) {
   const text = String(value || '').replace(/\s+/g, ' ').trim()
   if (!text) return '无'
   return text.length > 42 ? `${text.slice(0, 42)}…` : text
+}
+
+function formatResolutionDescription(value) {
+  const text = String(value || '').trim()
+  return text ? `${text}已处理` : '无'
 }
 
 function normalizeRow(row) {
@@ -137,24 +142,27 @@ function openResolve(row) {
   resolveFormRef.value?.clearValidate()
 }
 
-function attachmentName(file) {
+function legacyAttachmentName(file) {
   return file?.name || file?.url?.split('/').pop() || '附件'
+}
+
+function attachmentDisplayName(file) {
+  if (file?.name) return file.name
+  let storedName = file?.url?.split('/').pop() || ''
+  try { storedName = decodeURIComponent(storedName) } catch { /* keep raw name */ }
+  return storedName || 'attachment'
 }
 
 function openAttachmentPreview(file) {
   const source = new URL(file.url, window.location.origin)
-  // Older records may contain http://localhost:8080. When the system is
-  // opened through a LAN address, localhost points at the visitor's own
-  // computer instead of the server, so use the current host in that case.
-  const useCurrentHost = source.hostname === 'localhost'
-    && !['localhost', '127.0.0.1', '::1'].includes(window.location.hostname)
-  const previewOrigin = useCurrentHost
-    ? `${window.location.protocol}//${window.location.hostname}${source.port ? `:${source.port}` : ''}`
-    : source.origin
-  const previewUrl = new URL('/api/media/files/preview', previewOrigin)
+  const apiBaseUrl = new URL(import.meta.env.VITE_API_BASE_URL || '/api', window.location.origin)
+  const previewUrl = new URL(
+    `${apiBaseUrl.pathname.replace(/\/$/, '')}/media/files/preview`,
+    apiBaseUrl.origin,
+  )
   previewUrl.searchParams.set('url', source.toString())
   attachmentPreview.value = {
-    name: attachmentName(file),
+    name: attachmentDisplayName(file),
     url: previewUrl.toString(),
   }
   attachmentPreviewVisible.value = true
@@ -318,7 +326,7 @@ async function exportExcel() {
         </el-table-column>
         <el-table-column label="处理情况说明" min-width="210" show-overflow-tooltip>
           <template #default="{ row }">
-            <span :class="{ 'opinion-empty-cell': !row.resolutionDescription }">{{ row.resolutionDescription || '无' }}</span>
+            <span :class="{ 'opinion-empty-cell': !row.resolutionDescription }">{{ formatResolutionDescription(row.resolutionDescription) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="132" fixed="right">
@@ -379,7 +387,7 @@ async function exportExcel() {
           <div class="opinion-detail__section"><h3>相关附件（{{ detail.attachments?.length || 0 }}）</h3>
             <div v-if="detail.attachments?.length" class="opinion-detail__attachments">
               <div v-for="file in detail.attachments" :key="file.id || file.url" class="opinion-detail__attachment">
-                <span :title="attachmentName(file)">{{ attachmentName(file) }}</span>
+                <span :title="attachmentDisplayName(file)">{{ attachmentDisplayName(file) }}</span>
                 <el-button type="primary" size="small" plain :icon="View" @click="openAttachmentPreview(file)">在线浏览</el-button>
               </div>
             </div>
@@ -406,10 +414,10 @@ async function exportExcel() {
       />
     </el-dialog>
 
-    <el-dialog v-model="resolveVisible" title="填写解决情况" width="min(560px, 94vw)">
+    <el-dialog v-model="resolveVisible" title="" width="min(560px, 94vw)">
       <el-form ref="resolveFormRef" :model="resolveForm" :rules="resolveRules" label-position="top">
-        <el-form-item label="问题解决情况说明" prop="resolutionDescription" required>
-          <el-input v-model="resolveForm.resolutionDescription" type="textarea" :rows="6" maxlength="5000" show-word-limit placeholder="请说明问题处理结果、解决措施或后续安排" />
+        <el-form-item label="填写解决问题的部门" prop="resolutionDescription" required>
+          <el-input v-model="resolveForm.resolutionDescription" type="textarea" :rows="6" maxlength="5000" show-word-limit placeholder="如学工处" />
         </el-form-item>
       </el-form>
       <template #footer><el-button @click="resolveVisible = false">取消</el-button><el-button type="primary" :loading="resolving" @click="submitResolve">确认标记已处理</el-button></template>

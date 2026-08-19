@@ -1,7 +1,7 @@
 <script setup>
 import { reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Lock, OfficeBuilding, QuestionFilled, User } from '@element-plus/icons-vue'
+import { Lock, OfficeBuilding, User } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { getRole } from '@/config/access'
 import { login as loginApi } from '@/api/auth'
@@ -13,7 +13,6 @@ const router = useRouter()
 const auth = useAuthStore()
 const formRef = ref()
 const submitting = ref(false)
-const faqVisible = ref(false)
 
 const form = reactive({
   userCode: '',
@@ -132,53 +131,9 @@ async function submit() {
           </el-button>
         </el-form>
 
-        <div class="login-help">
-          <el-button link type="primary" :icon="QuestionFilled" @click="faqVisible = true">
-            常见问题
-          </el-button>
-        </div>
       </div>
     </section>
 
-    <el-dialog
-      v-model="faqVisible"
-      title="常见问题"
-      class="login-faq-dialog"
-      width="min(92vw, 560px)"
-      align-center
-    >
-      <div class="faq-content">
-        <section class="faq-section" aria-labelledby="account-format-title">
-          <h3 id="account-format-title">1. 账号密码格式</h3>
-          <dl class="faq-details">
-            <div>
-              <dt>账号</dt>
-              <dd>学生学号 / 工作人员工号</dd>
-            </div>
-            <div>
-              <dt>密码</dt>
-              <dd>@ + 姓名首字母，第一个大写后续小写 + 学号 / 工号</dd>
-            </div>
-          </dl>
-          <p class="faq-example">
-            <strong>示例：</strong>张三123456，账号为 <code>123456</code>，密码为
-            <code>@Zs123456</code>
-          </p>
-          <p class="faq-note">
-            <strong>注意：</strong>多音字可能识别到不同的首字母，如“曾”（Z 或 C）、“晟”（S 或 C）。
-          </p>
-        </section>
-
-        <!-- <section class="faq-section" aria-labelledby="support-group-title">
-          <h3 id="support-group-title">2. 客服群</h3>
-          <p>如有登录以及其他方面的问题，请进入 QQ 群（群号 <code>123456</code>）反馈。</p>
-        </section> -->
-      </div>
-
-      <template #footer>
-        <el-button type="primary" @click="faqVisible = false">我知道了</el-button>
-      </template>
-    </el-dialog>
   </main>
 </template>
 
@@ -305,104 +260,6 @@ async function submit() {
   min-height: 46px;
   margin-top: 10px;
   font-weight: 600;
-}
-
-.login-help {
-  display: flex;
-  justify-content: center;
-  margin-top: 12px;
-}
-
-.login-help .el-button {
-  min-height: 44px;
-  padding: 8px 14px;
-  font-weight: 600;
-}
-
-:global(.login-faq-dialog) {
-  display: flex;
-  max-height: calc(100dvh - 32px);
-  flex-direction: column;
-  overflow: hidden;
-  border-radius: 8px;
-}
-
-:global(.login-faq-dialog .el-dialog__header) {
-  padding-bottom: 16px;
-  border-bottom: 1px solid var(--color-border);
-}
-
-:global(.login-faq-dialog .el-dialog__title) {
-  color: var(--color-text);
-  font-size: 20px;
-  font-weight: 650;
-}
-
-:global(.login-faq-dialog .el-dialog__body) {
-  overflow-y: auto;
-}
-
-.faq-content {
-  color: var(--color-text);
-  font-size: 15px;
-  line-height: 1.7;
-}
-
-.faq-section h3 {
-  margin: 0;
-  font-size: 17px;
-  font-weight: 650;
-}
-
-.faq-section p {
-  margin: 12px 0 0;
-}
-
-.faq-section + .faq-section {
-  margin-top: 24px;
-  padding-top: 24px;
-  border-top: 1px solid var(--color-border);
-}
-
-.faq-details {
-  margin: 14px 0 0;
-}
-
-.faq-details > div {
-  display: grid;
-  grid-template-columns: 56px minmax(0, 1fr);
-  gap: 12px;
-}
-
-.faq-details > div + div {
-  margin-top: 8px;
-}
-
-.faq-details dt {
-  font-weight: 600;
-}
-
-.faq-details dd {
-  min-width: 0;
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-
-.faq-example {
-  padding: 12px 16px;
-  border-left: 3px solid var(--color-primary);
-  background: var(--color-primary-soft);
-}
-
-.faq-content code {
-  color: var(--color-primary);
-  font-family: inherit;
-  font-weight: 650;
-}
-
-.faq-note {
-  color: var(--color-text-secondary);
-  font-size: 14px;
 }
 
 @media(max-width: 960px) {

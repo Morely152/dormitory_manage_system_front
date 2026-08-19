@@ -82,7 +82,7 @@ async function handleSubmit() {
       </div>
       <div>
         <h1 id="opinion-page-title">意见征集</h1>
-        <span>你的每一条建议都将帮助我们持续改进宿舍服务。</span>
+        <span>你的每一条建议都将帮助我们持续改进学校服务。</span>
       </div>
     </section>
 
