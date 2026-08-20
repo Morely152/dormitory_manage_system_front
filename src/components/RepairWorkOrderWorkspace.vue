@@ -134,7 +134,7 @@ const pageConfigs = Object.freeze({
   create: {
     eyebrow: '问题管理',
     title: '创建维修工单',
-    description: '选择本苑区待处理问题，合并提交至宿管中心审核。',
+    /* description: '选择本苑区待处理问题，合并提交至宿管中心审核。', */
   },
   pendingReview: {
     eyebrow: '工单管理',
@@ -151,32 +151,32 @@ const pageConfigs = Object.freeze({
   dispatch: {
     eyebrow: '工单管理',
     title: '派发工单',
-    description: '为已通过审核的工单选择范围匹配的维修账号，派发后直接进入维修中。',
+    /* description: '为已通过审核的工单选择范围匹配的维修账号，派发后直接进入维修中。', */
     statuses: ['WAIT_ASSIGN', 'REWORK_REQUIRED'],
   },
   pending: {
     eyebrow: '维修工作台',
     title: '待处理工单',
-    description: '处理分配给当前维修账号的工单并提交维修结果。',
+    /* description: '处理分配给当前维修账号的工单并提交维修结果。', */
     worker: true,
     statuses: ['REPAIRING', 'REWORK_REQUIRED'],
   },
   records: {
     eyebrow: '工单管理',
     title: '维修工单记录',
-    description: '集中查看维修工单当前状态、关联问题和处理负责人。',
+    /* description: '集中查看维修工单当前状态、关联问题和处理负责人。', */
     summary: true,
   },
   history: {
     eyebrow: '历史记录',
     title: '维修工单历史',
-    description: '查看已完成工单的维修结果和验收信息。',
+    /* description: '查看已完成工单的维修结果和验收信息。', */
     statuses: ['COMPLETED'],
   },
   acceptance: {
     eyebrow: '工单管理',
     title: '验收工单',
-    description: '对已完成维修的问题逐项进行质量验收。',
+    /* description: '对已完成维修的问题逐项进行质量验收。', */
     statuses: ['WAIT_ACCEPTANCE'],
   },
 })
@@ -248,6 +248,9 @@ const displayedStatusOptions = computed(() => {
   return WORK_ORDER_STATUSES.filter((item) => config.value.statuses.includes(item.value))
 })
 const statusFilterClearable = computed(() => props.mode === 'pending' || !config.value.statuses)
+const usesScopedDefaultStatusFilter = computed(() =>
+  ['pendingReview', 'dispatch'].includes(props.mode),
+)
 
 const activeRepairItems = computed(() =>
   repairItems.value.filter((item) => item.selected),
@@ -262,7 +265,7 @@ function formatRequestLabel(request) {
 function getQueryParams() {
   const params = {
     statusCode: filters.statusCode || undefined,
-    statusCodes: props.mode === 'pendingReview' && !filters.statusCode
+    statusCodes: usesScopedDefaultStatusFilter.value && !filters.statusCode
       ? config.value.statuses?.join(',')
       : undefined,
     workOrderTypeCode: filters.workOrderTypeCode || undefined,
@@ -286,7 +289,7 @@ function getQueryParams() {
 }
 
 function initStatusFilter() {
-  filters.statusCode = ['pending', 'pendingReview'].includes(props.mode)
+  filters.statusCode = ['pending', 'pendingReview', 'dispatch'].includes(props.mode)
     ? ''
     : config.value.statuses?.[0] || ''
 }
