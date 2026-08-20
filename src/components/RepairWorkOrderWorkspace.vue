@@ -471,7 +471,7 @@ async function saveOrder() {
     return
   }
   if (orderForm.workOrderTypeCode === 'TEAM' && (orderForm.estimatedCost === undefined || orderForm.estimatedCost === null)) {
-    ElMessage.warning('维修队工单必须填写预计费用')
+    ElMessage.warning('维修队工单必须填写包工包料预算')
     return
   }
 
@@ -1079,11 +1079,11 @@ onActivated(async () => {
         <el-form-item label="工单类型" required><el-radio-group v-model="orderForm.workOrderTypeCode"><el-radio
               v-for="item in WORK_ORDER_TYPE_OPTIONS" :key="item.value" :value="item.value">{{ item.label
               }}</el-radio></el-radio-group>
-          <span v-if="orderForm.workOrderTypeCode === 'TEAM'" class="work-order-field-hint">维修队工单必须填写预计费用。</span>
         </el-form-item>
-        <el-form-item label="预计费用" v-if="orderForm.workOrderTypeCode === 'TEAM'" prop="estimatedCost" required><el-input-number
+        <el-form-item :label="orderForm.workOrderTypeCode === 'TEAM' ? '包工包料预算' : '维修材料预算'"
+          prop="estimatedCost" :required="orderForm.workOrderTypeCode === 'TEAM'"><el-input-number
             v-model="orderForm.estimatedCost" :min="0" :precision="2" :step="50" controls-position="right" /><span
-            class="work-order-field-hint">请根据问题情况填写预估费用。</span>
+            class="work-order-field-hint">{{ orderForm.workOrderTypeCode === 'TEAM' ? '维修队工单必填，请填写包工包料预算。' : '非必填，仅填写维修材料预算。' }}</span>
         </el-form-item>
         <el-form-item label="工单备注"><el-input v-model="orderForm.remark" type="textarea" :rows="4" maxlength="500"
             show-word-limit placeholder="可说明集中处理安排或现场注意事项" /></el-form-item>
@@ -1131,7 +1131,7 @@ onActivated(async () => {
       <div v-if="repairCoversAll" class="repair-result-total"><el-form label-position="top"><el-form-item
             label="实际总费用"><el-input-number v-model="repairForm.actualCost" :min="0" :precision="2" :step="50"
               controls-position="right" /><span
-              class="work-order-field-hint">全部问题完成后可填写实际总费用。</span></el-form-item><el-form-item label="工单维修留证图">
+              class="work-order-field-hint">全部问题完成后可填写实际总费用。</span></el-form-item><el-form-item label="维修单照片" v-if="selectedOrder?.workOrderTypeCode === 'TEAM'">
             <ImageUpload v-model="repairImages" :limit="1" purpose="REPAIR_PHOTO" visibility="PUBLIC" />
           </el-form-item></el-form></div>
       <template #footer><el-button @click="repairDialogVisible = false">取消</el-button><el-button type="primary"
