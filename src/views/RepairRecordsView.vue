@@ -32,13 +32,13 @@ const PANELS = Object.freeze({
   issues: {
     id: 'issues',
     title: '问题记录',
-    description: '按报修问题查看上报信息、处理进度和现场记录。',
+    
     icon: List,
   },
   workOrders: {
     id: 'work-orders',
     title: '工单记录',
-    description: '按维修工单查看派单、处理负责人和流转状态。',
+   
     icon: Document,
   },
 })
@@ -95,7 +95,7 @@ watch(activePanel, (panel) => {
       <div>
         <p>记录查询</p>
         <h1 id="repair-records-title">问题与工单记录</h1>
-        <span>通过页签按报修问题或维修工单维度查看处理记录。</span>
+  
       </div>
     </section>
 
@@ -111,10 +111,7 @@ watch(activePanel, (panel) => {
 
           <section class="repair-records-panel">
             <div class="repair-records-panel__intro">
-              <div>
-                <h2>{{ panel.title }}</h2>
-                <p>{{ panel.description }}</p>
-              </div>
+              <p>{{ panel.description }}</p>
             </div>
             <RepairIssueRecordsView v-if="panel.id === 'issues' && activePanel === panel.id" embedded />
             <RepairWorkOrderWorkspace v-else-if="panel.id === 'work-orders' && activePanel === panel.id" mode="records" embedded />

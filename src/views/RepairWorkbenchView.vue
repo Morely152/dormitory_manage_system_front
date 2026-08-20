@@ -263,14 +263,10 @@ watch(
       </div>
     </section>
 
-    <section v-if="activeTask && activeComponent" class="repair-workbench__content" :aria-labelledby="`task-${activeTask.id}`">
+    <section v-if="activeTask && activeComponent" class="repair-workbench__content">
       <el-card shadow="never">
         <template #header>
           <div class="repair-workbench__content-heading">
-            <div>
-              <p>当前事项</p>
-              <h2 :id="`task-${activeTask.id}`">{{ activeTask.title }}</h2>
-            </div>
             <span>{{ activeTask.description }}</span>
           </div>
         </template>

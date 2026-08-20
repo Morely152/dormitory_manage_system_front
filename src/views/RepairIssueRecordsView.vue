@@ -691,17 +691,17 @@ onActivated(() => loadRecords({ recoverEmptyPage: true }))
             @change="handleSearch"
           />
         </el-form-item>
-        <el-form-item v-if="managerRole" label="校区"style="width: 150px;">
+        <el-form-item v-if="managerRole" label="校区" style="width: 150px;">
           <el-select v-model="filters.campusId" clearable placeholder="全部校区" @change="(val) => { handleCampusChange(val); handleSearch() }">
             <el-option v-for="item in campusOptions" :key="item.value" :label="item.label" :value="item.value" />
           </el-select>
         </el-form-item>
-        <el-form-item v-if="managerRole" label="苑区"style="width: 150px;">
+        <el-form-item v-if="managerRole" label="苑区" style="width: 150px;">
           <el-select v-model="filters.zoneId" clearable placeholder="全部苑区" :disabled="!filters.campusId" @change="(val) => { handleZoneChange(val); handleSearch() }">
             <el-option v-for="item in zoneOptions" :key="item.value" :label="item.label" :value="item.value" />
           </el-select>
         </el-form-item>
-        <el-form-item v-if="managerRole" label="楼栋"style="width: 150px;">
+        <el-form-item v-if="managerRole" label="楼栋" style="width: 150px;">
           <el-select v-model="filters.buildingId" clearable placeholder="全部楼栋" :disabled="!filters.zoneId" @change="handleSearch">
             <el-option v-for="item in buildingOptions" :key="item.value" :label="item.label" :value="item.value" />
           </el-select>
@@ -967,7 +967,7 @@ onActivated(() => loadRecords({ recoverEmptyPage: true }))
             <dl>
               <div><dt>工单编号</dt><dd>#{{ selectedRecord.workOrder.id }}</dd></div>
               <div><dt>当前状态</dt><dd>{{ getAudienceStatusLabel(selectedRecord.workOrder) }}</dd></div>
-              <div><dt>处理账号</dt><dd>{{ selectedRecord.workOrder.repairer?.userName || selectedRecord.workOrder.repairer?.userCode || '暂未派发' }}</dd></div>
+              <div><dt>处理账号</dt><dd>{{ selectedRecord.workOrder.repairer?.userName || selectedRecord.workOrder.repairer?.userCode || '暂未处理' }}</dd></div>
               <div><dt>派单时间</dt><dd>{{ formatDateTime(selectedRecord.workOrder.assignedAt) }}</dd></div>
             </dl>
           </section>
@@ -1137,23 +1137,39 @@ onActivated(() => loadRecords({ recoverEmptyPage: true }))
 }
 
 .repair-filter-card :deep(.el-form-item) {
-  margin-right: 16px;
+  width: 100% !important;
+  margin-right: 0;
   margin-bottom: 0;
 }
 
 .repair-filter-card :deep(.el-input),
 .repair-filter-card :deep(.el-select) {
-  max-width: 100%;
-  width: 176px;
+  width: 100%;
 }
 
 .repair-filter-card :deep(.el-date-editor) {
-  max-width: 100%;
-  width: 282px;
+  width: 100%;
+}
+
+.repair-filter-card :deep(.el-form) {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 24px;
+}
+
+.repair-filter-card :deep(.el-form-item__content) {
+  min-width: 0;
 }
 
 .repair-filter-card__actions {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 12px;
   margin-right: 0 !important;
+}
+
+.repair-filter-card__actions :deep(.el-button) {
+  min-width: 128px;
 }
 
 .repair-link {
@@ -1507,6 +1523,7 @@ onActivated(() => loadRecords({ recoverEmptyPage: true }))
   }
 
   .repair-filter-card :deep(.el-form-item) {
+    width: 100% !important;
     margin-right: 0;
   }
 
@@ -1614,7 +1631,17 @@ onActivated(() => loadRecords({ recoverEmptyPage: true }))
   }
 
   .repair-filter-card :deep(.el-form-item) {
+    width: 100% !important;
     min-width: 0;
+  }
+
+  .repair-filter-card__actions {
+    display: flex;
+    gap: 10px;
+  }
+
+  .repair-filter-card__actions :deep(.el-button) {
+    flex: 1 1 0;
   }
 
   .repair-pagination {

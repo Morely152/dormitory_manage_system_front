@@ -1585,6 +1585,25 @@ onActivated(async () => {
     grid-template-columns: 1fr;
   }
 
+  .work-order-summary {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .summary-card {
+    gap: 5px;
+    padding: 10px;
+  }
+
+  .summary-card span {
+    font-size: 12px;
+    line-height: 1.35;
+  }
+
+  .summary-card strong {
+    font-size: 24px;
+  }
+
   .work-order-filter-card__actions {
     display: flex;
     gap: 8px;
