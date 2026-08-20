@@ -60,6 +60,10 @@ export function getMyRepairRequests(params) {
   return http.get('/repair-requests/mine', { params })
 }
 
+export function getAssignedRepairRequests(params) {
+  return http.get('/repair-requests/assigned', { params })
+}
+
 export function getRepairRequests(params) {
   return http.get('/repair-requests', { params })
 }

@@ -14,6 +14,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import ImageUpload from '@/components/ImageUpload.vue'
 import {
   cancelRepairRequest,
+  getAssignedRepairRequests,
   getMyRepairRequests,
   getRepairAreas,
   getRepairIssueTypes,
@@ -79,6 +80,9 @@ const auth = useAuthStore()
 const systemAdminRole = computed(() => auth.currentRole.value === ROLE_KEYS.SYSTEM_ADMIN)
 const reporterRole = computed(() =>
   props.personalOnly || [ROLE_KEYS.STUDENT, ROLE_KEYS.ZONE_ADMIN].includes(auth.currentRole.value),
+)
+const repairerRole = computed(() =>
+  !props.personalOnly && [ROLE_KEYS.REPAIR_WORKER, ROLE_KEYS.REPAIR_TEAM].includes(auth.currentRole.value),
 )
 const managerRole = computed(() =>
   !props.personalOnly &&
@@ -297,7 +301,9 @@ function getQueryParams({ statusCode = filters.statusCode, page = filters.page, 
 async function requestRecords(params) {
   const response = reporterRole.value
     ? await getMyRepairRequests(params)
-    : await getRepairRequests(params)
+    : repairerRole.value
+      ? await getAssignedRepairRequests(params)
+      : await getRepairRequests(params)
   return toPagedResult(response, '问题记录加载失败')
 }
 
@@ -748,6 +754,9 @@ onActivated(() => loadRecords({ recoverEmptyPage: true }))
             </el-tag>
           </template>
         </el-table-column>
+        <el-table-column v-if="repairerRole" label="关联工单" width="116">
+          <template #default="{ row }">#{{ row.workOrder?.id || '—' }}</template>
+        </el-table-column>
         <el-table-column label="现场图片" width="130">
           <template #default="{ row }">
             <div class="repair-list-images">
@@ -958,6 +967,7 @@ onActivated(() => loadRecords({ recoverEmptyPage: true }))
             <dl>
               <div><dt>工单编号</dt><dd>#{{ selectedRecord.workOrder.id }}</dd></div>
               <div><dt>当前状态</dt><dd>{{ getAudienceStatusLabel(selectedRecord.workOrder) }}</dd></div>
+              <div><dt>处理账号</dt><dd>{{ selectedRecord.workOrder.repairer?.userName || selectedRecord.workOrder.repairer?.userCode || '暂未派发' }}</dd></div>
               <div><dt>派单时间</dt><dd>{{ formatDateTime(selectedRecord.workOrder.assignedAt) }}</dd></div>
             </dl>
           </section>

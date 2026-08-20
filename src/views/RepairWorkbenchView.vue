@@ -51,6 +51,14 @@ const TASKS = Object.freeze({
     icon: List,
     view: 'issues',
   },
+  assignedIssues: {
+    id: 'assignedIssues',
+    group: '待办处理',
+    title: '我的工单问题',
+    description: '查看自动派发工单中的关联问题',
+    icon: List,
+    view: 'issues',
+  },
   createOrder: {
     id: 'createOrder',
     group: '待办处理',
@@ -168,8 +176,8 @@ const ROLE_TASK_IDS = Object.freeze({
     'workOrderHistory',
     'dictionary',
   ],
-  [ROLE_KEYS.REPAIR_WORKER]: ['pending', 'records', 'workOrderHistory'],
-  [ROLE_KEYS.REPAIR_TEAM]: ['pending', 'records', 'workOrderHistory'],
+  [ROLE_KEYS.REPAIR_WORKER]: ['pending', 'assignedIssues', 'records', 'workOrderHistory'],
+  [ROLE_KEYS.REPAIR_TEAM]: ['pending', 'assignedIssues', 'records', 'workOrderHistory'],
 })
 
 const ROLE_INTROS = Object.freeze({
