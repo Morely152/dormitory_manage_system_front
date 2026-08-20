@@ -1,6 +1,7 @@
 <script setup>
 import { ArrowRight, Bell, Check, CircleCheckFilled, Message, WarningFilled } from '@element-plus/icons-vue'
 import { computed, onMounted, ref, watch } from 'vue'
+import { ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { markAllNotificationsRead } from '@/api/notification'
 import { useNotificationStore } from '@/stores/notifications'
@@ -60,10 +61,18 @@ watch(
 onMounted(() => void openPreviewForLogin())
 
 async function markAllRead() {
-  await markAllNotificationsRead()
-  notificationStore.state.unreadCount = 0
-  await openPreview()
-}
+ /*  try {
+    await ElMessageBox.confirm('确定将所有通知标记为已读吗？', '全部已读', {
+      confirmButtonText: '确认已读',
+      cancelButtonText: '取消',
+      type: 'warning',
+    }) */
+    await markAllNotificationsRead()
+    notificationStore.state.unreadCount = 0
+    await openPreview()
+  } /* catch {
+  }
+} */
 
 function openCenter() {
   dialogVisible.value = false
@@ -122,32 +131,36 @@ async function openItem(item) {
           :key="item.id"
           class="notification-preview__item"
           :class="{ 'notification-preview__item--unread': !item.readAt }"
+          role="button"
+          tabindex="0"
+          @click="openItem(item)"
+          @keydown.enter="openItem(item)"
+          @keydown.space.prevent="openItem(item)"
         >
           <span class="notification-preview__dot" aria-hidden="true"></span>
           <div class="notification-preview__item-content">
-            <header>
-              <div class="notification-preview__tags">
-                <el-tag size="small" effect="light">{{ notificationTypeLabel(item) }}</el-tag>
-                <el-tag size="small" :type="priorityType(item.priority)" effect="light">{{ priorityLabel(item.priority) }}</el-tag>
-                <span
-                  v-if="item.actionRequired"
-                  class="notification-preview__status"
-                  :class="{ 'notification-preview__status--completed': item.completedAt }"
-                >
-                  <el-icon><component :is="item.completedAt ? CircleCheckFilled : WarningFilled" /></el-icon>
-                  {{ item.completedAt ? '已完成' : '待处理' }}
-                </span>
-              </div>
-              <time>{{ formatTime(item.publishedAt) }}</time>
-            </header>
             <strong>{{ item.title }}</strong>
+            <time>{{ formatTime(item.publishedAt) }}</time>
+            <div class="notification-preview__tags">
+              <el-tag size="small" effect="light">{{ notificationTypeLabel(item) }}</el-tag>
+              <el-tag size="small" :type="priorityType(item.priority)" effect="light">{{ priorityLabel(item.priority) }}</el-tag>
+              <span
+                v-if="item.actionRequired"
+                class="notification-preview__status"
+                :class="{ 'notification-preview__status--completed': item.completedAt }"
+              >
+                <el-icon><component :is="item.completedAt ? CircleCheckFilled : WarningFilled" /></el-icon>
+                {{ item.completedAt ? '已完成' : '待处理' }}
+              </span>
+            </div>
             <p>{{ item.content }}</p>
             <footer>
               <span v-if="!item.readAt" class="notification-preview__unread">未读</span>
               <span v-else>已读</span>
-              <el-button link type="primary" :icon="ArrowRight" @click="openItem(item)">
+              <span class="notification-preview__action">
+                <el-icon><ArrowRight /></el-icon>
                 {{ item.actionRequired && !item.completedAt ? '去处理' : '查看详情' }}
-              </el-button>
+              </span>
             </footer>
           </div>
         </article>
@@ -209,6 +222,7 @@ async function openItem(item) {
   padding: 16px;
   border: 1px solid #e7edf6;
   border-radius: 8px;
+  cursor: pointer;
   text-align: left;
   background: #fff;
   transition: border-color var(--motion-fast), box-shadow var(--motion-fast), transform var(--motion-fast);
@@ -220,20 +234,25 @@ async function openItem(item) {
   transform: translateY(-1px);
 }
 
+.notification-preview__item:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
 .notification-preview__item--unread { background: #f8fbff; }
 .notification-preview__item-content { min-width: 0; }
-.notification-preview__item-content > header,
 .notification-preview__item-content footer,
 .notification-preview__tags { display: flex; align-items: center; }
-.notification-preview__item-content > header { justify-content: space-between; gap: 14px; }
 .notification-preview__tags { flex-wrap: wrap; gap: 7px; }
-.notification-preview__item-content > header time,
+.notification-preview__item-content > time,
 .notification-preview__item-content footer { color: var(--color-text-muted); font-size: 12px; }
-.notification-preview__item-content > header time { flex: 0 0 auto; }
-.notification-preview__item-content > strong { display: block; margin-top: 10px; color: var(--color-text); font-size: 16px; line-height: 1.45; }
-.notification-preview__item-content p { display: -webkit-box; margin: 7px 0 12px; overflow: hidden; color: var(--color-text-secondary); font-size: 14px; line-height: 1.65; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.notification-preview__item-content > strong { display: block; color: var(--color-text); font-size: 16px; line-height: 1.45; }
+.notification-preview__item-content > time { display: block; margin-top: 6px; }
+.notification-preview__tags { margin-top: 8px; }
+.notification-preview__item-content p { display: -webkit-box; margin: 10px 0 12px; overflow: hidden; color: var(--color-text-secondary); font-size: 14px; line-height: 1.65; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .notification-preview__item-content footer { justify-content: space-between; gap: 12px; }
 .notification-preview__unread { color: var(--el-color-danger); font-weight: 650; }
+.notification-preview__action { display: inline-flex; align-items: center; gap: 4px; color: var(--color-primary); font-weight: 650; }
 .notification-preview__status { display: inline-flex; align-items: center; gap: 3px; color: var(--el-color-warning); font-size: 12px; font-weight: 650; }
 .notification-preview__status--completed { color: var(--el-color-success); }
 
@@ -283,8 +302,6 @@ async function openItem(item) {
   .notification-preview-dialog__title small,
   .notification-preview__header small { display: none; }
   .notification-preview__item { padding: 14px; }
-  .notification-preview__item-content > header { align-items: flex-start; flex-direction: column; gap: 8px; }
-  .notification-preview__item-content > header time { flex: initial; }
   :global(.notification-preview-dialog .el-dialog__header) { padding: 18px 18px 14px; }
   :global(.notification-preview-dialog .el-dialog__body) { padding: 16px 18px 18px; }
 }
