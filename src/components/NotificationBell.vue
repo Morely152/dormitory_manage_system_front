@@ -9,6 +9,10 @@ const router = useRouter()
 const notificationStore = useNotificationStore()
 const dialogVisible = ref(false)
 const unreadBadge = computed(() => notificationStore.state.unreadCount > 99 ? '99+' : notificationStore.state.unreadCount)
+// 只展示未读且未完成的通知：排除「已读」项和「流程待办且已完成」的项
+const pendingPreviewItems = computed(() =>
+  notificationStore.state.previewItems.filter(item => !item.readAt && !(item.actionRequired && item.completedAt)),
+)
 
 function priorityLabel(priority) {
   return { NORMAL: '普通', IMPORTANT: '重要', URGENT: '紧急' }[priority] || '普通'
@@ -112,9 +116,9 @@ async function openItem(item) {
           全部已读
         </el-button>
       </header>
-      <div v-if="notificationStore.state.previewItems.length" class="notification-preview__items">
+      <div v-if="pendingPreviewItems.length" class="notification-preview__items">
         <article
-          v-for="item in notificationStore.state.previewItems"
+          v-for="item in pendingPreviewItems"
           :key="item.id"
           class="notification-preview__item"
           :class="{ 'notification-preview__item--unread': !item.readAt }"
