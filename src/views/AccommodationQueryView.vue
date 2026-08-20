@@ -637,8 +637,14 @@ function handleAccommodationImportClosed() {
   selectedEmptyBed.value = null
 }
 
-function handleStudentInformationUpdated() {
-  loadBedRows()
+async function handleStudentInformationUpdated() {
+  changeApplicationVisible.value = false
+  bedRequestCache.clear()
+  if (displayMode.value === 'table') {
+    await loadBedRows()
+    return
+  }
+  await loadChartRows()
 }
 
 const CHINESE_BUILDING_NUMBER_MAP = Object.freeze({
