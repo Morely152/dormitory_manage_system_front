@@ -21,7 +21,7 @@ export const PRIORITY_OPTIONS = Object.freeze([
 ])
 
 export const WORK_ORDER_TYPE_OPTIONS = Object.freeze([
-  { value: 'PERSONAL', label: '维修人员工单' },
+  { value: 'PERSONAL', label: '维修工工单' },
   { value: 'TEAM', label: '维修队工单' },
 ])
 

@@ -1634,6 +1634,8 @@ onActivated(async () => {
 
   .work-order-mobile-selection-list :deep(.el-checkbox) {
     display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
     width: 100%;
     height: auto;
     min-height: 104px;
@@ -1650,12 +1652,15 @@ onActivated(async () => {
   }
 
   .work-order-mobile-selection-list :deep(.el-checkbox__input) {
-    align-self: start;
+    grid-row: 1;
+    grid-column: 1;
     margin-top: 2px;
   }
 
   .work-order-mobile-selection-list :deep(.el-checkbox__label) {
     display: grid;
+    grid-row: 1;
+    grid-column: 2;
     min-width: 0;
     padding-left: 10px;
     color: inherit;
