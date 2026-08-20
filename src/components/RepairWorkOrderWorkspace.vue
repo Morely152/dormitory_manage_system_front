@@ -116,6 +116,7 @@ const canDispatchSelected = computed(
   () =>
     canDispatchOrder.value &&
     (props.mode === 'dispatch' || isSystemAdminRecords.value) &&
+    selectedOrder.value?.workOrderTypeCode !== 'TEAM' &&
     ['WAIT_ASSIGN', 'REWORK_REQUIRED'].includes(selectedOrder.value?.statusCode),
 )
 const canSubmitResultsSelected = computed(
@@ -144,7 +145,7 @@ const pageConfigs = Object.freeze({
   review: {
     eyebrow: '工单管理',
     title: '工单审核',
-    description: '核对关联问题、维修范围和工单类型，审核通过后进入派单环节。',
+    description: '核对关联问题、维修范围和工单类型；维修队工单审核通过后将自动轮派。',
     statuses: ['WAIT_CENTER_REVIEW'],
   },
   dispatch: {
@@ -563,7 +564,8 @@ async function saveReview() {
     const payload = { decision: reviewForm.decision }
     if (reviewForm.decision === 'REJECT') payload.rejectReason = reviewForm.rejectReason.trim()
     await reviewRepairWorkOrder(selectedOrder.value.id, payload)
-    ElMessage.success(reviewForm.decision === 'APPROVE' ? '工单已审核通过' : '工单已驳回')
+    const approvedTeamOrder = reviewForm.decision === 'APPROVE' && selectedOrder.value?.workOrderTypeCode === 'TEAM'
+    ElMessage.success(approvedTeamOrder ? '工单已审核通过，已自动派发给维修队' : reviewForm.decision === 'APPROVE' ? '工单已审核通过' : '工单已驳回')
     reviewDialogVisible.value = false
     await openDetail(selectedOrder.value)
     await refreshPage()
@@ -886,7 +888,7 @@ onActivated(async () => {
         <div>
           <p>待审核工单</p>
           <h2>核对问题内容后完成审核</h2>
-          <span>审核通过后，工单将进入派发维修人员环节。</span>
+          <span>维修队工单审核通过后将按轮派规则自动派发；维修人员工单进入人工派发环节。</span>
         </div>
         <div class="work-order-review-focus__count" aria-label="待审核工单数量">
           <span>当前待审核</span>
@@ -1036,7 +1038,7 @@ onActivated(async () => {
     <el-dialog v-model="orderDialogVisible" class="repair-form-dialog" :title="creatingDraft ? '创建维修工单' : '修改维修工单'" width="min(720px, calc(100% - 32px))" destroy-on-close>
       <el-form label-position="top">
         <el-form-item label="关联问题" required><el-select v-model="orderForm.requestIds" multiple filterable collapse-tags collapse-tags-tooltip placeholder="请选择待处理问题"><el-option v-for="request in pendingRequests" :key="request.id" :label="formatRequestLabel(request)" :value="request.id" /></el-select></el-form-item>
-        <el-form-item label="工单类型" required><el-radio-group v-model="orderForm.workOrderTypeCode"><el-radio v-for="item in WORK_ORDER_TYPE_OPTIONS" :key="item.value" :value="item.value">{{ item.label }}</el-radio></el-radio-group></el-form-item>
+        <el-form-item label="工单类型" required><el-radio-group v-model="orderForm.workOrderTypeCode"><el-radio v-for="item in WORK_ORDER_TYPE_OPTIONS" :key="item.value" :value="item.value">{{ item.label }}</el-radio></el-radio-group><span v-if="orderForm.workOrderTypeCode === 'TEAM'" class="work-order-field-hint">维修队工单在中心审核通过后，系统会按本苑区维修队顺序自动派发。</span></el-form-item>
         <el-form-item label="预计费用"><el-input-number v-model="orderForm.estimatedCost" :min="0" :precision="2" :step="50" controls-position="right" /><span class="work-order-field-hint">可根据问题情况填写预估费用。</span></el-form-item>
         <el-form-item label="工单备注"><el-input v-model="orderForm.remark" type="textarea" :rows="4" maxlength="500" show-word-limit placeholder="可说明集中处理安排或现场注意事项" /></el-form-item>
       </el-form>
