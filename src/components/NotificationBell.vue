@@ -155,8 +155,7 @@ async function openItem(item) {
             </div>
             <p>{{ item.content }}</p>
             <footer>
-              <span v-if="!item.readAt" class="notification-preview__unread">未读</span>
-              <span v-else>已读</span>
+              <span></span>
               <span class="notification-preview__action">
                 <el-icon><ArrowRight /></el-icon>
                 {{ item.actionRequired && !item.completedAt ? '去处理' : '查看详情' }}
@@ -251,7 +250,6 @@ async function openItem(item) {
 .notification-preview__tags { margin-top: 8px; }
 .notification-preview__item-content p { display: -webkit-box; margin: 10px 0 12px; overflow: hidden; color: var(--color-text-secondary); font-size: 14px; line-height: 1.65; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .notification-preview__item-content footer { justify-content: space-between; gap: 12px; }
-.notification-preview__unread { color: var(--el-color-danger); font-weight: 650; }
 .notification-preview__action { display: inline-flex; align-items: center; gap: 4px; color: var(--color-primary); font-weight: 650; }
 .notification-preview__status { display: inline-flex; align-items: center; gap: 3px; color: var(--el-color-warning); font-size: 12px; font-weight: 650; }
 .notification-preview__status--completed { color: var(--el-color-success); }
