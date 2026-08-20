@@ -262,6 +262,9 @@ function formatRequestLabel(request) {
 function getQueryParams() {
   const params = {
     statusCode: filters.statusCode || undefined,
+    statusCodes: props.mode === 'pendingReview' && !filters.statusCode
+      ? config.value.statuses?.join(',')
+      : undefined,
     workOrderTypeCode: filters.workOrderTypeCode || undefined,
     processingOnly: props.mode === 'pending' || undefined,
     page: filters.page,
@@ -283,7 +286,9 @@ function getQueryParams() {
 }
 
 function initStatusFilter() {
-  filters.statusCode = props.mode === 'pending' ? '' : config.value.statuses?.[0] || ''
+  filters.statusCode = ['pending', 'pendingReview'].includes(props.mode)
+    ? ''
+    : config.value.statuses?.[0] || ''
 }
 
 async function loadOrders({ recoverEmptyPage = false } = {}) {
@@ -847,7 +852,7 @@ onActivated(async () => {
         <div class="work-order-selection-card__heading">
           <div>
             <h2>选择待处理问题</h2>
-            <p>同一张工单中的问题须属于当前苑区。</p>
+            
           </div>
           <el-button type="primary" :icon="DocumentAdd" :disabled="!selectedPendingIds.length"
             @click="openCreateDialog">
@@ -897,8 +902,7 @@ onActivated(async () => {
       <section v-if="mode === 'review'" class="work-order-review-focus" aria-label="工单审核">
         <div>
           <p>待审核工单</p>
-          <h2>核对问题内容后完成审核</h2>
-          <span>维修队工单审核通过后将按轮派规则自动派发；维修人员工单进入人工派发环节。</span>
+          
         </div>
         <div class="work-order-review-focus__count" aria-label="待审核工单数量">
           <span>当前待审核</span>
@@ -946,7 +950,7 @@ onActivated(async () => {
           </el-form-item>
           <el-form-item class="work-order-filter-card__actions">
             <el-button type="primary" :icon="Search" @click="handleSearch">查询</el-button>
-            <el-button @click="handleReset">重置</el-button>
+            <el-button @click="handleReset" style="margin-left: 14px;">重置</el-button>
           </el-form-item>
         </el-form>
       </section>

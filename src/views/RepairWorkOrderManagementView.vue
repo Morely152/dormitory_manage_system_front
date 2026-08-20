@@ -11,14 +11,14 @@ const notificationStore = useNotificationStore()
 
 const PANELS = Object.freeze({
   create: {
-    title: '创建工单',
-    description: '选择待处理问题，整理并提交维修工单。',
+    title: '',
+    description: '',
     icon: DocumentAdd,
     notificationPaths: ['/maintenance/work-orders/create'],
   },
   pendingReview: {
-    title: '待审核工单',
-    description: '查看已提交工单，并处理被驳回后需要修改的内容。',
+    title: '',
+    description: '',
     icon: Tickets,
     notificationPaths: [
       '/maintenance/work-orders/create?tab=pending-review',
@@ -75,7 +75,7 @@ watch(activePanel, (panel) => {
       <div>
         <p>工单流转</p>
         <h1 id="work-order-management-title">工单创建</h1>
-        <span>通过顶部导航在创建工单和查看待审核工单之间切换。</span>
+        
       </div>
     </section>
 

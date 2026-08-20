@@ -403,7 +403,7 @@ export const ACCESS_MODULES = Object.freeze([
     operation: 'create',
     roles: [ROLE_KEYS.SYSTEM_ADMIN, ROLE_KEYS.ZONE_MANAGER],
   },
-  {
+  /* {
     id: 'repair-history',
     subsystem: SUBSYSTEM_KEYS.MAINTENANCE,
     routeName: 'RepairHistory',
@@ -425,7 +425,7 @@ export const ACCESS_MODULES = Object.freeze([
       ROLE_KEYS.REPAIR_TEAM,
     ],
     roles: maintenanceRoles,
-  },
+  }, */
   {
     id: 'repair-work-order-review',
     subsystem: SUBSYSTEM_KEYS.MAINTENANCE,

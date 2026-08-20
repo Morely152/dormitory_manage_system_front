@@ -1137,39 +1137,23 @@ onActivated(() => loadRecords({ recoverEmptyPage: true }))
 }
 
 .repair-filter-card :deep(.el-form-item) {
-  width: 100% !important;
-  margin-right: 0;
+  margin-right: 16px;
   margin-bottom: 0;
 }
 
 .repair-filter-card :deep(.el-input),
 .repair-filter-card :deep(.el-select) {
-  width: 100%;
+  max-width: 100%;
+  width: 176px;
 }
 
 .repair-filter-card :deep(.el-date-editor) {
-  width: 100%;
-}
-
-.repair-filter-card :deep(.el-form) {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px 24px;
-}
-
-.repair-filter-card :deep(.el-form-item__content) {
-  min-width: 0;
+  max-width: 100%;
+  width: 282px;
 }
 
 .repair-filter-card__actions {
-  grid-column: 1 / -1;
-  display: flex;
-  gap: 12px;
   margin-right: 0 !important;
-}
-
-.repair-filter-card__actions :deep(.el-button) {
-  min-width: 128px;
 }
 
 .repair-link {
