@@ -767,14 +767,18 @@ async function saveQualityReview() {
         return result
       }),
     })
-    ElMessage.success('质检结果已提交')
+    ElMessage.success('验收结果已提交')
     qualityDialogVisible.value = false
-    await openDetail(selectedOrder.value)
-    await refreshPage()
+    detailVisible.value = false
     await notificationStore.refresh()
+    if (props.mode !== 'acceptance') {
+      await router.push({ name: 'RepairWorkOrderAcceptance' })
+      return
+    }
+    await refreshPage({ recoverEmptyPage: true })
   } catch (error) {
     if (await recoverFromDataConflict(error)) return
-    ElMessage.error(requestErrorMessage(error, '提交质检结果失败'))
+    ElMessage.error(requestErrorMessage(error, '提交验收结果失败'))
   } finally {
     saving.value = false
   }
