@@ -88,6 +88,19 @@ const showLocationFilters = computed(() =>
   canFilterAcrossLocations.value ||
   (managerRole.value && !['review', 'dispatch'].includes(props.mode)),
 )
+const scopedCampusId = computed(() => auth.currentUser.value?.campusId ?? null)
+const scopedZoneId = computed(() => auth.currentUser.value?.zoneId ?? null)
+const scopedBuildingId = computed(() => auth.currentUser.value?.buildingId ?? null)
+const hasLocationScope = (id) => id !== null && id !== undefined && id !== ''
+const showCampusFilter = computed(() =>
+  showLocationFilters.value && !hasLocationScope(scopedCampusId.value),
+)
+const showZoneFilter = computed(() =>
+  showLocationFilters.value && !hasLocationScope(scopedZoneId.value),
+)
+const showBuildingFilter = computed(() =>
+  showLocationFilters.value && !hasLocationScope(scopedBuildingId.value),
+)
 const canDispatchOrder = computed(() =>
   [ROLE_KEYS.SYSTEM_ADMIN, ROLE_KEYS.ZONE_MANAGER].includes(auth.currentRole.value),
 )
@@ -198,6 +211,9 @@ const repairDialogVisible = ref(false)
 const qualityDialogVisible = ref(false)
 const creatingDraft = ref(false)
 const pendingRequests = ref([])
+const pendingTotal = ref(0)
+const pendingPagination = reactive({ page: 1, pageSize: 20 })
+const pendingRequestCache = ref(new Map())
 const selectedPendingIds = ref([])
 const candidates = ref([])
 const summary = reactive({
@@ -250,6 +266,7 @@ const displayedStatusOptions = computed(() => {
   return WORK_ORDER_STATUSES.filter((item) => config.value.statuses.includes(item.value))
 })
 const statusFilterClearable = computed(() => props.mode === 'pending' || !config.value.statuses)
+const showStatusFilter = computed(() => !['review', 'acceptance'].includes(props.mode))
 const usesScopedDefaultStatusFilter = computed(() =>
   ['pendingReview', 'dispatch'].includes(props.mode),
 )
@@ -260,6 +277,14 @@ const activeRepairItems = computed(() =>
 const repairCoversAll = computed(() =>
   repairItems.value.length > 0 && activeRepairItems.value.length === repairItems.value.length,
 )
+const pendingRequestOptions = computed(() => {
+  const options = new Map(pendingRequests.value.map((request) => [request.id, request]))
+  selectedPendingIds.value.forEach((requestId) => {
+    const request = pendingRequestCache.value.get(requestId)
+    if (request) options.set(request.id, request)
+  })
+  return [...options.values()]
+})
 function formatRequestLabel(request) {
   return `#${request.id} · ${getIssueTypeName(request)} · ${getRecordLocation(request)}`
 }
@@ -282,9 +307,15 @@ function getQueryParams() {
   }
 
   if (managerRole.value) {
-    params.campusId = filters.campusId || undefined
-    params.zoneId = filters.zoneId || undefined
-    params.buildingId = filters.buildingId || undefined
+    params.campusId = hasLocationScope(scopedCampusId.value)
+      ? scopedCampusId.value
+      : filters.campusId || undefined
+    params.zoneId = hasLocationScope(scopedZoneId.value)
+      ? scopedZoneId.value
+      : filters.zoneId || undefined
+    params.buildingId = hasLocationScope(scopedBuildingId.value)
+      ? scopedBuildingId.value
+      : filters.buildingId || undefined
   }
 
   return params
@@ -333,13 +364,49 @@ async function loadSummary() {
   }
 }
 
-async function loadPendingRequests() {
+async function loadPendingRequests({ recoverEmptyPage = false } = {}) {
+  loading.value = true
   try {
-    const response = await getRepairRequests({ statusCode: 'PENDING', page: 1, pageSize: 100 })
-    pendingRequests.value = toPagedResult(response, '待处理问题加载失败').items
+    const response = await getRepairRequests({
+      statusCode: 'PENDING',
+      page: pendingPagination.page,
+      pageSize: pendingPagination.pageSize,
+    })
+    const page = toPagedResult(response, '待处理问题加载失败')
+    pendingRequests.value = page.items
+    pendingTotal.value = page.total
+    const cache = new Map(pendingRequestCache.value)
+    page.items.forEach((request) => cache.set(request.id, request))
+    pendingRequestCache.value = cache
+    if (recoverEmptyPage && !page.items.length && page.total > 0 && pendingPagination.page > 1) {
+      pendingPagination.page -= 1
+      await loadPendingRequests()
+    }
   } catch (error) {
     ElMessage.error(requestErrorMessage(error, '待处理问题加载失败'))
+  } finally {
+    loading.value = false
   }
+}
+
+function handlePendingTableSelectionChange(selection) {
+  const currentPageIds = new Set(pendingRequests.value.map((request) => String(request.id)))
+  const selectedOnPage = selection.map((request) => request.id)
+  selectedPendingIds.value = [
+    ...selectedPendingIds.value.filter((requestId) => !currentPageIds.has(String(requestId))),
+    ...selectedOnPage,
+  ]
+}
+
+function handlePendingPageChange(page) {
+  pendingPagination.page = page
+  loadPendingRequests()
+}
+
+function handlePendingPageSizeChange(pageSize) {
+  pendingPagination.pageSize = pageSize
+  pendingPagination.page = 1
+  loadPendingRequests()
 }
 
 async function loadCampusOptions() {
@@ -386,6 +453,27 @@ async function handleZoneChange(zoneId) {
   } catch (error) {
     ElMessage.error(requestErrorMessage(error, '楼栋列表加载失败'))
   }
+}
+
+function applyLocationScope() {
+  if (hasLocationScope(scopedCampusId.value)) filters.campusId = scopedCampusId.value
+  if (hasLocationScope(scopedZoneId.value)) filters.zoneId = scopedZoneId.value
+  if (hasLocationScope(scopedBuildingId.value)) filters.buildingId = scopedBuildingId.value
+}
+
+async function initializeLocationFilters() {
+  if (props.mode === 'create' || !managerRole.value) return
+
+  applyLocationScope()
+  if (hasLocationScope(scopedZoneId.value) && !hasLocationScope(scopedBuildingId.value)) {
+    await handleZoneChange(scopedZoneId.value)
+    return
+  }
+  if (hasLocationScope(scopedCampusId.value) && !hasLocationScope(scopedZoneId.value)) {
+    await handleCampusChange(scopedCampusId.value)
+    return
+  }
+  if (!hasLocationScope(scopedCampusId.value)) await loadCampusOptions()
 }
 
 async function refreshPage({ recoverEmptyPage = false } = {}) {
@@ -453,7 +541,7 @@ async function openDraftDialog() {
   const requestIds = getRequestRows(selectedOrder.value).map((item) => item.id).filter(Boolean)
   const currentRequests = getRequestRows(selectedOrder.value)
   const requestOptions = new Map(
-    [...currentRequests, ...pendingRequests.value]
+    [...currentRequests, ...pendingRequestOptions.value]
       .filter((item) => item?.id)
       .map((item) => [item.id, item]),
   )
@@ -789,7 +877,7 @@ function handleSearch() {
   loadOrders()
 }
 
-function handleReset() {
+async function handleReset() {
   initStatusFilter()
   filters.workOrderTypeCode = ''
   filters.dateRange = []
@@ -799,7 +887,8 @@ function handleReset() {
   zoneOptions.value = []
   buildingOptions.value = []
   filters.page = 1
-  loadOrders()
+  await initializeLocationFilters()
+  await loadOrders()
 }
 
 function handlePageChange(page) {
@@ -833,14 +922,18 @@ watch(
     repairDialogVisible.value = false
     qualityDialogVisible.value = false
     selectedPendingIds.value = []
+    pendingPagination.page = 1
+    pendingTotal.value = 0
+    pendingRequestCache.value = new Map()
     initStatusFilter()
+    await initializeLocationFilters()
     await refreshPage()
   },
 )
 
 onMounted(async () => {
   initStatusFilter()
-  if (managerRole.value) loadCampusOptions()
+  await initializeLocationFilters()
   await refreshPage()
 })
 
@@ -878,7 +971,7 @@ onActivated(async () => {
           </el-button>
         </div>
         <el-table class="work-order-desktop-table" v-loading="loading" :data="pendingRequests" row-key="id"
-          empty-text="暂无可建单的待处理问题" @selection-change="selectedPendingIds = $event.map((item) => item.id)">
+          empty-text="暂无可建单的待处理问题" @selection-change="handlePendingTableSelectionChange">
           <el-table-column type="selection" width="52" reserve-selection />
           <el-table-column label="问题编号" width="92"><template #default="{ row }">#{{ row.id
               }}</template></el-table-column>
@@ -903,20 +996,21 @@ onActivated(async () => {
             <span class="work-order-mobile-selection-card__description">{{ getRequestDescription(request) }}</span>
           </el-checkbox>
         </el-checkbox-group>
+        <div v-if="pendingTotal" class="work-order-pagination">
+          <el-pagination v-model:current-page="pendingPagination.page" v-model:page-size="pendingPagination.pageSize"
+            :total="pendingTotal" :page-sizes="[10, 20, 50, 100]" layout="total, sizes, prev, pager, next"
+            @current-change="handlePendingPageChange" @size-change="handlePendingPageSizeChange" />
+        </div>
       </section>
     </template>
 
     <template v-else>
-      <section v-if="config.summary && canViewSummary" class="work-order-summary" aria-label="维修工作概览">
-        <article class="summary-card"><span>待处理问题</span><strong>{{ summary.pendingRequestCount }}</strong></article>
-        <article class="summary-card"><span>待派单工单</span><strong>{{ summary.workOrderCounts.WAIT_ASSIGN || 0 }}</strong>
-        </article>
-        <article class="summary-card"><span>维修中工单</span><strong>{{ summary.workOrderCounts.REPAIRING || 0 }}</strong>
-        </article>
-        <article class="summary-card"><span>待验收工单</span><strong>{{ summary.workOrderCounts.WAIT_ACCEPTANCE || 0
-            }}</strong></article>
+     <section v-if="config.summary && canViewSummary" class="work-order-summary" aria-label="维修工作概览">
+        <article class="summary-card"><strong>{{ summary.pendingRequestCount }}</strong><span>待处理问题</span></article>
+        <article class="summary-card"><strong>{{ summary.workOrderCounts.WAIT_ASSIGN || 0 }}</strong><span>待派单工单</span></article>
+        <article class="summary-card"><strong>{{ summary.workOrderCounts.REPAIRING || 0 }}</strong><span>维修中工单</span></article>
+        <article class="summary-card"><strong>{{ summary.workOrderCounts.WAIT_ACCEPTANCE || 0}}</strong><span>待验收工单</span></article>
       </section>
-
       <section v-if="mode === 'review'" class="work-order-review-focus" aria-label="工单审核">
         <div>
           <p>待审核工单</p>
@@ -929,9 +1023,9 @@ onActivated(async () => {
         </div>
       </section>
 
-      <section class="work-order-filter-card" aria-label="工单筛选">
+      <section v-if="!['review', 'dispatch', 'pending'].includes(mode)" class="work-order-filter-card" aria-label="工单筛选">
         <el-form inline @submit.prevent="handleSearch">
-          <el-form-item v-if="mode !== 'review'" label="处理状态">
+          <el-form-item v-if="showStatusFilter" label="处理状态">
             <el-select v-model="filters.statusCode" :clearable="statusFilterClearable" placeholder="全部状态"
               @change="handleSearch">
               <el-option v-for="item in displayedStatusOptions" :key="item.value" :label="item.label"
@@ -948,19 +1042,19 @@ onActivated(async () => {
             <el-date-picker v-model="filters.dateRange" type="daterange" value-format="YYYY-MM-DDTHH:mm:ss"
               range-separator="至" start-placeholder="开始日期" end-placeholder="结束日期" @change="handleSearch" />
           </el-form-item>
-          <el-form-item v-if="showLocationFilters" label="校区">
+          <el-form-item v-if="showCampusFilter" label="校区">
             <el-select v-model="filters.campusId" clearable placeholder="全部校区"
               @change="(val) => { handleCampusChange(val); handleSearch() }">
               <el-option v-for="item in campusOptions" :key="item.value" :label="item.label" :value="item.value" />
             </el-select>
           </el-form-item>
-          <el-form-item v-if="showLocationFilters" label="苑区">
+          <el-form-item v-if="showZoneFilter" label="苑区">
             <el-select v-model="filters.zoneId" clearable placeholder="全部苑区" :disabled="!filters.campusId"
               @change="(val) => { handleZoneChange(val); handleSearch() }">
               <el-option v-for="item in zoneOptions" :key="item.value" :label="item.label" :value="item.value" />
             </el-select>
           </el-form-item>
-          <el-form-item v-if="showLocationFilters" label="楼栋">
+          <el-form-item v-if="showBuildingFilter" label="楼栋">
             <el-select v-model="filters.buildingId" clearable placeholder="全部楼栋" :disabled="!filters.zoneId"
               @change="handleSearch">
               <el-option v-for="item in buildingOptions" :key="item.value" :label="item.label" :value="item.value" />
@@ -1089,7 +1183,7 @@ onActivated(async () => {
       width="min(720px, calc(100% - 32px))" destroy-on-close>
       <el-form label-position="top">
         <el-form-item label="关联问题" required><el-select v-model="orderForm.requestIds" multiple filterable collapse-tags
-            collapse-tags-tooltip placeholder="请选择待处理问题"><el-option v-for="request in pendingRequests" :key="request.id"
+            collapse-tags-tooltip placeholder="请选择待处理问题"><el-option v-for="request in pendingRequestOptions" :key="request.id"
               :label="formatRequestLabel(request)" :value="request.id" /></el-select></el-form-item>
         <el-form-item label="工单类型" required><el-radio-group v-model="orderForm.workOrderTypeCode"><el-radio
               v-for="item in WORK_ORDER_TYPE_OPTIONS" :key="item.value" :value="item.value">{{ item.label
@@ -1683,9 +1777,9 @@ onActivated(async () => {
 
   .work-order-mobile-selection-card__heading {
     display: flex;
+    flex-direction: column;
     align-items: start;
-    justify-content: space-between;
-    gap: 10px;
+    gap: 2px;
   }
 
   .work-order-mobile-selection-card__heading strong {
@@ -1701,6 +1795,10 @@ onActivated(async () => {
     color: var(--color-text-muted);
     font-size: 12px;
     line-height: 1.55;
+  }
+
+  .work-order-mobile-selection-card__heading small {
+    margin-top: 0;
   }
 
   .work-order-mobile-selection-card__description {

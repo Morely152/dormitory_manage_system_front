@@ -665,7 +665,7 @@ onActivated(() => loadRecords({ recoverEmptyPage: true }))
       </div>
     </section>
 
-    <section class="repair-filter-card" aria-label="问题记录筛选">
+    <section v-if="!personalOnly || recordScope === 'history'" class="repair-filter-card" aria-label="问题记录筛选">
       <el-form inline @submit.prevent="handleSearch">
         <el-form-item label="处理状态" style="width: 190px;">
           <el-select v-model="filters.statusCode" clearable placeholder="全部状态" @change="handleSearch">
@@ -1336,7 +1336,6 @@ onActivated(() => loadRecords({ recoverEmptyPage: true }))
 
 .repair-progress :deep(.el-step) {
   flex-basis: auto !important;
-  padding-bottom: 26px;
   min-height: 56px;
 }
 

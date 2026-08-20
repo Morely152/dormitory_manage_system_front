@@ -62,7 +62,7 @@ export const SUBSYSTEMS = Object.freeze([
     routeName: 'MaintenanceWorkspace',
     path: '/maintenance',
     title: '维修系统',
-    description: '覆盖报修上报、问题流转、工单处理与验收。',
+    description: '学生公寓维修事务一体化管理平台。',
     icon: 'Tools',
     roles: maintenanceRoles,
   },

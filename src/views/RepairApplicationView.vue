@@ -464,10 +464,8 @@ onMounted(async () => {
     <section class="repair-workspace" aria-label="维修问题上报表单">
       <div class="workspace-heading">
         <div>
-          <p class="workspace-heading__eyebrow">报修定位</p>
-          <h2>确认报修范围</h2>
+          <h2><span class="workspace-heading__eyebrow">报修定位 · </span>确认报修范围</h2>
         </div>
-        <span class="batch-rule">逐条填写，依次提交</span>
       </div>
 
       <div v-if="isStudent" v-loading="loading.accommodation" class="student-location">
@@ -537,8 +535,7 @@ onMounted(async () => {
 
       <div class="issues-heading">
         <div>
-          <p class="workspace-heading__eyebrow">报修明细</p>
-          <h2>填写维修问题</h2>
+          <h2><span class="workspace-heading__eyebrow">报修明细 · </span>填写维修问题</h2>
         </div>
       </div>
 
@@ -711,7 +708,6 @@ onMounted(async () => {
 .workspace-heading__eyebrow {
   margin: 0 0 5px;
   color: var(--color-primary);
-  font-size: 13px;
   font-weight: 650;
 }
 
@@ -1073,6 +1069,7 @@ onMounted(async () => {
   .feature-header {
     align-items: flex-start;
     gap: 12px;
+    padding-bottom: 0;
   }
 
   .repair-workspace {
@@ -1131,7 +1128,6 @@ onMounted(async () => {
   }
 
   .photo-field {
-    order: -1;
     max-width: none;
   }
 
