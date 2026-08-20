@@ -11,6 +11,7 @@ import {
 } from '@element-plus/icons-vue'
 import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useRouter } from 'vue-router'
 import ImageUpload from '@/components/ImageUpload.vue'
 import { ROLE_KEYS } from '@/config/access'
 import {
@@ -64,6 +65,7 @@ const props = defineProps({
 const emit = defineEmits(['updated'])
 
 const auth = useAuthStore()
+const router = useRouter()
 const notificationStore = useNotificationStore()
 const systemAdminRole = computed(() => auth.currentRole.value === ROLE_KEYS.SYSTEM_ADMIN)
 const repairAccountRole = computed(() =>
@@ -73,6 +75,9 @@ const canViewSummary = computed(() =>
   [ROLE_KEYS.ZONE_MANAGER, ROLE_KEYS.DORMITORY_ADMIN, ROLE_KEYS.SYSTEM_ADMIN].includes(
     auth.currentRole.value,
   ),
+)
+const canAccessAcceptance = computed(() =>
+  [ROLE_KEYS.ZONE_MANAGER, ROLE_KEYS.SYSTEM_ADMIN].includes(auth.currentRole.value),
 )
 const managerRole = computed(() =>
   [ROLE_KEYS.ZONE_MANAGER, ROLE_KEYS.DORMITORY_ADMIN, ROLE_KEYS.SYSTEM_ADMIN].includes(
@@ -579,9 +584,9 @@ async function saveReview() {
     const approvedTeamOrder = reviewForm.decision === 'APPROVE' && selectedOrder.value?.workOrderTypeCode === 'TEAM'
     ElMessage.success(approvedTeamOrder ? '工单已审核通过，已自动派发给维修队' : reviewForm.decision === 'APPROVE' ? '工单已审核通过' : '工单已驳回')
     reviewDialogVisible.value = false
-    await openDetail(selectedOrder.value)
-    await refreshPage()
+    detailVisible.value = false
     await notificationStore.refresh()
+    await refreshPage({ recoverEmptyPage: true })
   } catch (error) {
     if (await recoverFromDataConflict(error)) return
     ElMessage.error(requestErrorMessage(error, '工单审核失败'))
@@ -677,6 +682,13 @@ async function saveRepairResults() {
     return
   }
 
+  if (repairCoversAll.value && (repairForm.actualCost === undefined || repairForm.actualCost === null || repairForm.actualCost === '')) {
+    ElMessage.warning(selectedOrder.value?.workOrderTypeCode === 'TEAM'
+      ? '请填写实际包工包料费用'
+      : '请填写实际维修材料费用')
+    return
+  }
+
   if (repairForm.actualCost !== undefined && Number(repairForm.actualCost) < 0) {
     ElMessage.warning('实际费用不能为负数')
     return
@@ -690,9 +702,7 @@ async function saveRepairResults() {
   }
 
   if (repairCoversAll.value) {
-    if (repairForm.actualCost !== undefined && repairForm.actualCost !== null && repairForm.actualCost !== '') {
-      payload.actualCost = Number(repairForm.actualCost)
-    }
+    payload.actualCost = Number(repairForm.actualCost)
     if (repairImages.value[0]) payload.repairImageUrl = repairImages.value[0]
   }
 
@@ -701,9 +711,14 @@ async function saveRepairResults() {
     await submitRepairWorkOrderResults(selectedOrder.value.id, payload)
     ElMessage.success('维修结果已提交')
     repairDialogVisible.value = false
+    await notificationStore.refresh()
+    if (repairCoversAll.value && canAccessAcceptance.value) {
+      detailVisible.value = false
+      await router.push({ name: 'RepairWorkOrderAcceptance' })
+      return
+    }
     await openDetail(selectedOrder.value)
     await refreshPage()
-    await notificationStore.refresh()
   } catch (error) {
     if (await recoverFromDataConflict(error)) return
     ElMessage.error(requestErrorMessage(error, '提交维修结果失败'))
@@ -1082,8 +1097,7 @@ onActivated(async () => {
         </el-form-item>
         <el-form-item :label="orderForm.workOrderTypeCode === 'TEAM' ? '包工包料预算' : '维修材料预算'"
           prop="estimatedCost" :required="orderForm.workOrderTypeCode === 'TEAM'"><el-input-number
-            v-model="orderForm.estimatedCost" :min="0" :precision="2" :step="50" controls-position="right" /><span
-            class="work-order-field-hint">{{ orderForm.workOrderTypeCode === 'TEAM' ? '维修队工单必填，请填写包工包料预算。' : '非必填，仅填写维修材料预算。' }}</span>
+            v-model="orderForm.estimatedCost" :min="0" :precision="2" :step="50" controls-position="right" />
         </el-form-item>
         <el-form-item label="工单备注"><el-input v-model="orderForm.remark" type="textarea" :rows="4" maxlength="500"
             show-word-limit placeholder="可说明集中处理安排或现场注意事项" /></el-form-item>
@@ -1129,9 +1143,9 @@ onActivated(async () => {
         </article>
       </div>
       <div v-if="repairCoversAll" class="repair-result-total"><el-form label-position="top"><el-form-item
-            label="实际总费用"><el-input-number v-model="repairForm.actualCost" :min="0" :precision="2" :step="50"
+            :label="selectedOrder?.workOrderTypeCode === 'TEAM' ? '实际包工包料费用' : '实际维修材料费用'" required><el-input-number v-model="repairForm.actualCost" :min="0" :precision="2" :step="50"
               controls-position="right" /><span
-              class="work-order-field-hint">全部问题完成后可填写实际总费用。</span></el-form-item><el-form-item label="维修单照片" v-if="selectedOrder?.workOrderTypeCode === 'TEAM'">
+              class="work-order-field-hint">全部问题完成后必须填写实际费用。</span></el-form-item><el-form-item label="维修单照片" v-if="selectedOrder?.workOrderTypeCode === 'TEAM'">
             <ImageUpload v-model="repairImages" :limit="1" purpose="REPAIR_PHOTO" visibility="PUBLIC" />
           </el-form-item></el-form></div>
       <template #footer><el-button @click="repairDialogVisible = false">取消</el-button><el-button type="primary"
@@ -1758,6 +1772,27 @@ onActivated(async () => {
     color: var(--color-primary);
     font-size: 13px;
     font-weight: 650;
+  }
+
+  .repair-result-list :deep(.el-checkbox) {
+    display: flex;
+    width: 100%;
+    height: auto;
+    align-items: flex-start;
+    margin-right: 0;
+  }
+
+  .repair-result-list :deep(.el-checkbox__input) {
+    flex: 0 0 auto;
+    margin-top: 3px;
+  }
+
+  .repair-result-list :deep(.el-checkbox__label) {
+    min-width: 0;
+    padding-left: 8px;
+    overflow-wrap: anywhere;
+    white-space: normal;
+    line-height: 1.55;
   }
 
   .work-order-detail__section :deep(.el-card__body) {
