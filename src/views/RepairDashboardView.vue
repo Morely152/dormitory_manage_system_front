@@ -1,6 +1,6 @@
 <script setup>
 import { Download } from '@element-plus/icons-vue'
-import { onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import * as echarts from 'echarts'
 import html2canvas from 'html2canvas'
 import { ElMessage } from 'element-plus'
@@ -49,6 +49,15 @@ const DETAIL_COLUMNS = [
   { prop: 'reported_at', label: '报修时间', width: 150 },
   { prop: 'work_order_status_name', label: '工单状态', width: 100 },
 ]
+const visibleDetailColumns = computed(() => [
+  ...DETAIL_COLUMNS,
+  ...(detailDimension.value === 'satisfaction'
+    ? [
+      { prop: 'satisfaction_name', label: '满意度', width: 90 },
+      { prop: 'satisfaction_remark', label: '评价意见', minWidth: 220 },
+    ]
+    : []),
+])
 
 const statusChartRef = ref(null)
 const areaChartRef = ref(null)
@@ -632,7 +641,7 @@ onBeforeUnmount(() => {
       >
         <el-table-column type="index" label="#" width="50" />
         <el-table-column
-          v-for="col in DETAIL_COLUMNS"
+          v-for="col in visibleDetailColumns"
           :key="col.prop"
           :prop="col.prop"
           :label="col.label"
