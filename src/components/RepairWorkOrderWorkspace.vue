@@ -76,9 +76,6 @@ const canViewSummary = computed(() =>
     auth.currentRole.value,
   ),
 )
-const canAccessAcceptance = computed(() =>
-  [ROLE_KEYS.ZONE_MANAGER, ROLE_KEYS.SYSTEM_ADMIN].includes(auth.currentRole.value),
-)
 const managerRole = computed(() =>
   [ROLE_KEYS.ZONE_MANAGER, ROLE_KEYS.DORMITORY_ADMIN, ROLE_KEYS.SYSTEM_ADMIN].includes(
     auth.currentRole.value,
@@ -711,14 +708,13 @@ async function saveRepairResults() {
     await submitRepairWorkOrderResults(selectedOrder.value.id, payload)
     ElMessage.success('维修结果已提交')
     repairDialogVisible.value = false
+    detailVisible.value = false
     await notificationStore.refresh()
-    if (repairCoversAll.value && canAccessAcceptance.value) {
-      detailVisible.value = false
-      await router.push({ name: 'RepairWorkOrderAcceptance' })
+    if (props.mode !== 'pending') {
+      await router.push({ name: 'RepairWorkOrderPending' })
       return
     }
-    await openDetail(selectedOrder.value)
-    await refreshPage()
+    await refreshPage({ recoverEmptyPage: true })
   } catch (error) {
     if (await recoverFromDataConflict(error)) return
     ElMessage.error(requestErrorMessage(error, '提交维修结果失败'))
