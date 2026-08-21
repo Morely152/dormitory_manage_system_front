@@ -149,7 +149,7 @@ function handleExceed() {
     </el-upload>
 
     <p class="image-upload__hint">
-      支持 JPG、JPEG、PNG、WEBP 格式，单张不超过 {{ maxSizeMb }} MB，最多 {{ limit }} 张。
+      文件大小不超过 {{ maxSizeMb }} MB，最多 {{ limit }} 张。
     </p>
 
     <el-image-viewer

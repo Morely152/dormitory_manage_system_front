@@ -65,6 +65,7 @@ const priorityChartRef = ref(null)
 const trendChartRef = ref(null)
 const repairerChartRef = ref(null)
 const satisfactionChartRef = ref(null)
+const repairerMetricMode = ref('issue')
 
 let statusChart = null
 let areaChart = null
@@ -239,8 +240,8 @@ function initCharts() {
   if (areaChartRef.value) {
     areaChart = echarts.init(areaChartRef.value)
     areaChart.on('click', (params) => {
-      const item = dashboardData.value?.repairAreaDistribution?.[params.dataIndex]
-      if (item) openDetail('报修区域分布 - ' + item.name, 'area', item.code)
+      const item = params.data
+      if (item?.code) openDetail('报修区域分布 - ' + item.name, 'area', item.code)
     })
   }
   if (priorityChartRef.value) {
@@ -260,8 +261,8 @@ function initCharts() {
   if (repairerChartRef.value) {
     repairerChart = echarts.init(repairerChartRef.value)
     repairerChart.on('click', (params) => {
-      const item = dashboardData.value?.repairerWorkload?.[params.dataIndex]
-      if (item) openDetail('维修人工作量 - ' + item.name, 'repairer', item.code)
+      const item = params.data
+      if (item?.code) openDetail('维修人工作量 - ' + item.name, 'repairer', item.code)
     })
   }
   if (satisfactionChartRef.value) {
@@ -347,7 +348,7 @@ function renderHorizontalBarChart(chart, data, title) {
     series: [{
       name: title,
       type: 'bar',
-      data: sorted.map((item) => item.value),
+      data: sorted.map((item) => ({ value: item.value, name: item.name, code: item.code })),
       itemStyle: {
         color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
           { offset: 0, color: '#1d4ed8' },
@@ -404,9 +405,15 @@ function renderCharts() {
   renderHorizontalBarChart(areaChart, dashboardData.value.repairAreaDistribution, '报修区域')
   renderPieChart(priorityChart, dashboardData.value.priorityDistribution, '优先级')
   renderLineChart(trendChart, dashboardData.value.monthlyTrend, '报修趋势')
-  renderHorizontalBarChart(repairerChart, dashboardData.value.repairerWorkload, '维修人工作量')
+  const repairerData = repairerMetricMode.value === 'issue'
+    ? (dashboardData.value.repairerIssueWorkload || [])
+    : (dashboardData.value.repairerWorkload || [])
+  renderHorizontalBarChart(repairerChart, repairerData,
+    repairerMetricMode.value === 'issue' ? '问题数' : '工单数')
   renderPieChart(satisfactionChart, dashboardData.value.satisfactionDistribution, '满意度')
 }
+
+watch(repairerMetricMode, () => renderCharts())
 
 async function exportDashboardImage() {
   if (!dashboardPageRef.value) return
@@ -554,46 +561,29 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <section class="dashboard-metrics">
-      <div class="dashboard-metric">
-        <span>报修总数</span>
-        <div class="dashboard-metric-value">
-          <strong>{{ summary.totalRequests }}</strong>
-          <small>单</small>
+    <section class="dashboard-summary-grid" aria-label="问题与工单统计">
+      <div class="dashboard-summary-block">
+        <div class="dashboard-summary-heading"><strong>问题统计</strong><span>按报修问题计数</span></div>
+        <div class="dashboard-metrics">
+          <div class="dashboard-metric"><span>问题总数</span><div class="dashboard-metric-value"><strong>{{ summary.totalRequests }}</strong><small>个</small></div></div>
+          <div class="dashboard-metric"><span>待处理</span><div class="dashboard-metric-value"><strong>{{ summary.pendingCount }}</strong><small>个</small></div></div>
+          <div class="dashboard-metric"><span>处理中</span><div class="dashboard-metric-value"><strong>{{ summary.inProgressCount }}</strong><small>个</small></div></div>
+          <div class="dashboard-metric"><span>已完成</span><div class="dashboard-metric-value"><strong>{{ summary.completedCount }}</strong><small>个</small></div></div>
+          <div class="dashboard-metric dashboard-metric--rate"><span>完成率</span><div class="dashboard-metric-value"><strong :style="{ color: getCompletionRateColor(summary.completionRate) }">{{ summary.completionRate }}%</strong></div></div>
+          <div class="dashboard-metric"><span>返修问题</span><div class="dashboard-metric-value"><strong>{{ summary.reworkCount }}</strong><small>个</small></div></div>
+          <div class="dashboard-metric"><span>已撤销</span><div class="dashboard-metric-value"><strong>{{ summary.cancelledCount }}</strong><small>个</small></div></div>
         </div>
       </div>
-      <div class="dashboard-metric">
-        <span>待处理</span>
-        <div class="dashboard-metric-value">
-          <strong>{{ summary.pendingCount }}</strong>
-          <small>单</small>
-        </div>
-      </div>
-      <div class="dashboard-metric">
-        <span>处理中</span>
-        <div class="dashboard-metric-value">
-          <strong>{{ summary.inProgressCount }}</strong>
-          <small>单</small>
-        </div>
-      </div>
-      <div class="dashboard-metric">
-        <span>已完成</span>
-        <div class="dashboard-metric-value">
-          <strong>{{ summary.completedCount }}</strong>
-          <small>单</small>
-        </div>
-      </div>
-      <div class="dashboard-metric dashboard-metric--rate">
-        <span>完成率</span>
-        <div class="dashboard-metric-value">
-          <strong :style="{ color: getCompletionRateColor(summary.completionRate) }">{{ summary.completionRate }}%</strong>
-        </div>
-      </div>
-      <div class="dashboard-metric">
-        <span>返修数</span>
-        <div class="dashboard-metric-value">
-          <strong>{{ summary.reworkCount }}</strong>
-          <small>单</small>
+      <div class="dashboard-summary-block">
+        <div class="dashboard-summary-heading"><strong>工单统计</strong><span>按维修工单计数</span></div>
+        <div class="dashboard-metrics">
+          <div class="dashboard-metric"><span>工单总数</span><div class="dashboard-metric-value"><strong>{{ dashboardData?.workOrderSummary?.totalCount || 0 }}</strong><small>单</small></div></div>
+          <div class="dashboard-metric"><span>待处理</span><div class="dashboard-metric-value"><strong>{{ dashboardData?.workOrderSummary?.pendingCount || 0 }}</strong><small>单</small></div></div>
+          <div class="dashboard-metric"><span>处理中</span><div class="dashboard-metric-value"><strong>{{ dashboardData?.workOrderSummary?.inProgressCount || 0 }}</strong><small>单</small></div></div>
+          <div class="dashboard-metric"><span>已完成</span><div class="dashboard-metric-value"><strong>{{ dashboardData?.workOrderSummary?.completedCount || 0 }}</strong><small>单</small></div></div>
+          <div class="dashboard-metric dashboard-metric--rate"><span>完成率</span><div class="dashboard-metric-value"><strong :style="{ color: getCompletionRateColor(dashboardData?.workOrderSummary?.completionRate || 0) }">{{ dashboardData?.workOrderSummary?.completionRate || 0 }}%</strong></div></div>
+          <div class="dashboard-metric"><span>返修工单</span><div class="dashboard-metric-value"><strong>{{ dashboardData?.workOrderSummary?.reworkCount || 0 }}</strong><small>单</small></div></div>
+          <div class="dashboard-metric"><span>工单类型</span><div class="dashboard-metric-value dashboard-type-summary"><span v-for="item in (dashboardData?.workOrderTypeDistribution || [])" :key="item.code">{{ item.name }} {{ item.value }}</span></div></div>
         </div>
       </div>
     </section>
@@ -616,7 +606,13 @@ onBeforeUnmount(() => {
         <div ref="trendChartRef" class="chart-canvas"></div>
       </div>
       <div class="chart-panel">
-        <h3>维修人工作量Top10</h3>
+        <div class="chart-panel-heading">
+          <h3>维修人工作量Top10</h3>
+          <el-radio-group v-model="repairerMetricMode" size="small" class="chart-switch" aria-label="切换维修人统计口径">
+            <el-radio-button label="issue">问题</el-radio-button>
+            <el-radio-button label="workOrder">工单</el-radio-button>
+          </el-radio-group>
+        </div>
         <div ref="repairerChartRef" class="chart-canvas"></div>
       </div>
       <div class="chart-panel">
@@ -765,11 +761,39 @@ onBeforeUnmount(() => {
   color: #93c5fd;
 }
 
+.dashboard-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.dashboard-summary-block {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--screen-border);
+  border-radius: 8px;
+  background: var(--screen-panel);
+}
+
+.dashboard-summary-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin: 0 2px 6px;
+  color: var(--screen-text);
+  font-size: 13px;
+}
+
+.dashboard-summary-heading span {
+  color: var(--screen-muted);
+  font-size: 11px;
+}
+
 .dashboard-metrics {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 8px;
-  flex: 0 0 auto;
 }
 
 .dashboard-metric {
@@ -807,6 +831,16 @@ onBeforeUnmount(() => {
   font-size: 11px;
 }
 
+.dashboard-type-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 6px;
+  color: var(--screen-muted);
+  font-size: 11px;
+  line-height: 1.25;
+}
+
 .dashboard-metric--rate strong {
   color: #36d399;
 }
@@ -835,6 +869,21 @@ onBeforeUnmount(() => {
   color: var(--screen-text);
   font-size: 14px;
   font-weight: 600;
+}
+
+.chart-panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.chart-panel-heading h3 {
+  min-width: 0;
+}
+
+.chart-switch {
+  flex: 0 0 auto;
 }
 
 .chart-canvas {

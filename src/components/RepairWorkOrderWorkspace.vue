@@ -1151,7 +1151,7 @@ onActivated(async () => {
             </template>
             <div class="work-order-request-list">
               <article v-for="request in getRequestRows(selectedOrder)" :key="request.id">
-                <div><strong>#{{ request.id }} {{ getIssueTypeName(request) }}</strong><el-tag size="small"
+                <div><strong># {{ request.id }} {{ getIssueTypeName(request) }}</strong><el-tag size="small"
                     :type="getStatusTagType(request.statusCode)" effect="light">{{ getStatusLabel(request.statusCode,
                       request.statusName) }}</el-tag></div>
                 <span>{{ getRecordLocation(request) }}</span>
@@ -1612,7 +1612,6 @@ onActivated(async () => {
 .repair-result-list,
 .quality-list {
   display: grid;
-  gap: 14px;
 }
 
 .repair-result-list article,
@@ -1622,6 +1621,7 @@ onActivated(async () => {
   border: 1px solid var(--color-border);
   border-radius: 8px;
   background: #fbfcff;
+  margin-top: 20px;
 }
 
 .repair-result-list article.is-unselected {
