@@ -3,15 +3,17 @@ import { ArrowRight, Bell, Check, CircleCheckFilled, Message, WarningFilled } fr
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
-import { markAllNotificationsRead } from '@/api/notification'
+import { markAllNotificationsRead, markNotificationRead } from '@/api/notification'
 import { useNotificationStore } from '@/stores/notifications'
 
 const router = useRouter()
 const notificationStore = useNotificationStore()
 const dialogVisible = ref(false)
 const unreadBadge = computed(() => notificationStore.state.unreadCount > 99 ? '99+' : notificationStore.state.unreadCount)
-// 只展示未读且未完成的通知：排除「已读」项和「流程待办且已完成」的项
+// 只展示未读且未完成的通知：普通通知打开后自动已读并从这里隐藏
 const pendingPreviewItems = computed(() =>
+//如果不需要隐藏，则替换下面的代码
+ // notificationStore.state.previewItems.filter(item => !(item.actionRequired && item.completedAt)),
   notificationStore.state.previewItems.filter(item => !item.readAt && !(item.actionRequired && item.completedAt)),
 )
 
@@ -34,9 +36,24 @@ function formatTime(value) {
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString('zh-CN', { hour12: false })
 }
 
-async function openPreview() {
+async function openPreview({ markOrdinaryRead = true } = {}) {
   try {
     await notificationStore.loadPreview()
+    if (!markOrdinaryRead) return
+
+    const ordinaryUnreadItems = notificationStore.state.previewItems.filter(item => !item.readAt && !item.actionRequired)
+    if (!ordinaryUnreadItems.length) return
+
+    const results = await Promise.allSettled(
+      ordinaryUnreadItems.map(item => markNotificationRead(item.id)),
+    )
+    let markedCount = 0
+    results.forEach((result, index) => {
+      if (result.status !== 'fulfilled') return
+      ordinaryUnreadItems[index].readAt = new Date().toISOString()
+      markedCount += 1
+    })
+    notificationStore.state.unreadCount = Math.max(0, notificationStore.state.unreadCount - markedCount)
   } catch {
     notificationStore.state.previewItems = []
   }
@@ -45,7 +62,7 @@ async function openPreview() {
 async function openPreviewForLogin() {
   if (!notificationStore.consumePreviewOpen()) return
   dialogVisible.value = true
-  await openPreview()
+  await openPreview({ markOrdinaryRead: false })
 }
 
 async function openDialog() {

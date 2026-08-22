@@ -78,6 +78,7 @@ function resolveScope(scope, historyOnly) {
 
 const auth = useAuthStore()
 const systemAdminRole = computed(() => auth.currentRole.value === ROLE_KEYS.SYSTEM_ADMIN)
+const showAssociatedWorkOrder = computed(() => auth.currentRole.value !== ROLE_KEYS.STUDENT)
 const reporterRole = computed(() =>
   props.personalOnly || [ROLE_KEYS.STUDENT, ROLE_KEYS.ZONE_ADMIN].includes(auth.currentRole.value),
 )
@@ -231,14 +232,14 @@ const progressSteps = computed(() => {
     ? [
         { title: '已提交', time: record.reportedAt || record.createdAt },
         { title: '安排维修', time: workOrder.assignedAt },
-        { title: '维修处理中', time: workOrder.repairerAcceptedAt || record.repairedAt },
+        { title: '维修完成', time: record.repairedAt },
         { title: '验收确认', time: record.acceptedAt },
       ]
     : [
         { title: '问题上报', time: record.reportedAt || record.createdAt },
-        { title: '中心确认', time: null },
-        { title: '派发维修', time: workOrder.assignedAt },
-        { title: '维修处理', time: workOrder.repairerAcceptedAt || record.repairedAt },
+        { title: '中心确认', time: workOrder.centerReviewedAt },
+        { title: '维修处理中', time: workOrder.assignedAt },
+        { title: '维修完成', time: record.repairedAt },
         { title: '质量验收', time: record.acceptedAt },
       ]
   const activeIndex = getProgressIndex(record.statusCode, reporterView)
@@ -889,14 +890,6 @@ onActivated(() => loadRecords({ recoverEmptyPage: true }))
                   <dt>学号</dt>
                   <dd>{{ selectedRecord.reporter.studentNo }}</dd>
                 </div>
-                <div v-if="selectedRecord.reporter.collegeName">
-                  <dt>学院</dt>
-                  <dd>{{ selectedRecord.reporter.collegeName }}</dd>
-                </div>
-                <div v-if="selectedRecord.reporter.className">
-                  <dt>班级</dt>
-                  <dd>{{ selectedRecord.reporter.className }}</dd>
-                </div>
                 <div v-if="selectedRecord.reporter.userCode">
                   <dt>账号</dt>
                   <dd>{{ selectedRecord.reporter.userCode }}</dd>
@@ -962,7 +955,7 @@ onActivated(() => loadRecords({ recoverEmptyPage: true }))
             </el-steps>
           </section>
 
-          <section v-if="selectedRecord.workOrder" class="repair-detail__section repair-detail__work-order">
+          <section v-if="showAssociatedWorkOrder && selectedRecord.workOrder" class="repair-detail__section repair-detail__work-order">
             <h3>关联工单</h3>
             <dl>
               <div><dt>工单编号</dt><dd>#{{ selectedRecord.workOrder.id }}</dd></div>
@@ -1019,20 +1012,48 @@ onActivated(() => loadRecords({ recoverEmptyPage: true }))
       </template>
     </el-dialog>
 
-    <el-dialog v-model="satisfactionVisible" class="repair-form-dialog" title="评价维修结果" width="min(460px, calc(100% - 32px))" destroy-on-close>
-      <el-form label-position="top">
-        <el-form-item label="满意度" required>
-          <el-radio-group v-model="satisfactionForm.satisfactionCode">
-            <el-radio v-for="item in SATISFACTION_OPTIONS" :key="item.value" :value="item.value">{{ item.label }}</el-radio>
-          </el-radio-group>
-        </el-form-item>
-        <el-form-item label="评价说明">
-          <el-input v-model="satisfactionForm.satisfactionRemark" type="textarea" :rows="3" maxlength="255" show-word-limit placeholder="可补充本次维修体验" />
-        </el-form-item>
-      </el-form>
+    <el-dialog v-model="satisfactionVisible" class="repair-form-dialog repair-satisfaction-dialog" title="评价维修结果" width="min(520px, calc(100% - 32px))" destroy-on-close>
+      <div class="satisfaction-panel">
+        <section class="satisfaction-panel__hero" aria-label="维修评价提示">
+          <span class="satisfaction-panel__spark satisfaction-panel__spark--left" aria-hidden="true">✦</span>
+          <div class="satisfaction-panel__hero-copy">
+            <span>维修服务已完成</span>
+            <strong>说说这次体验吧 😊</strong>
+            <small>您的每一次反馈，都会让服务更贴心。</small>
+          </div>
+          <span class="satisfaction-panel__mascot" aria-hidden="true">🌈</span>
+          <span class="satisfaction-panel__spark satisfaction-panel__spark--right" aria-hidden="true">✿</span>
+        </section>
+        <el-form label-position="top">
+          <el-form-item class="satisfaction-panel__choice" required>
+            <template #label>
+              <span class="satisfaction-panel__label">整体感受 <small>请选择最符合的一项</small></span>
+            </template>
+            <el-radio-group v-model="satisfactionForm.satisfactionCode" class="satisfaction-options">
+              <el-radio v-for="item in SATISFACTION_OPTIONS" :key="item.value" :value="item.value"
+                :class="['satisfaction-option', item.value === 'SATISFIED' ? 'is-satisfied' : 'is-unsatisfied', { 'is-selected': satisfactionForm.satisfactionCode === item.value }]">
+                <span class="satisfaction-option__content">
+                  <span class="satisfaction-option__emoji" aria-hidden="true">{{ item.value === 'SATISFIED' ? '😄' : '😕' }}</span>
+                  <span class="satisfaction-option__copy">
+                    <strong>{{ item.label }}</strong>
+                    <small>{{ item.value === 'SATISFIED' ? '维修结果符合预期' : '还希望继续改进' }}</small>
+                  </span>
+                  <span class="satisfaction-option__mark" aria-hidden="true">{{ satisfactionForm.satisfactionCode === item.value ? '✓' : '' }}</span>
+                </span>
+              </el-radio>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item class="satisfaction-panel__remark">
+            <template #label>
+              <span class="satisfaction-panel__label">想说的话 <small>选填</small></span>
+            </template>
+            <el-input v-model="satisfactionForm.satisfactionRemark" type="textarea" :rows="3" maxlength="255" show-word-limit placeholder="例如：维修师傅很及时，问题解决得很彻底～" />
+          </el-form-item>
+        </el-form>
+      </div>
       <template #footer>
         <el-button @click="satisfactionVisible = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="saveSatisfaction">提交评价</el-button>
+        <el-button type="primary" :loading="saving" @click="saveSatisfaction">✨ 提交评价</el-button>
       </template>
     </el-dialog>
 
@@ -1458,6 +1479,265 @@ onActivated(() => loadRecords({ recoverEmptyPage: true }))
   font-size: 12px;
 }
 
+.satisfaction-panel {
+  position: relative;
+  overflow: hidden;
+  padding: 4px;
+}
+
+.satisfaction-panel__hero {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 116px;
+  margin: -2px -2px 24px;
+  padding: 22px 90px 22px 24px;
+  overflow: hidden;
+  border-radius: 16px;
+  color: #fff;
+  background: linear-gradient(135deg, #5967ee 0%, #8b5cf6 50%, #ee75b8 100%);
+  box-shadow: 0 12px 24px rgba(112, 81, 220, 0.24);
+}
+
+.satisfaction-panel__hero::before,
+.satisfaction-panel__hero::after {
+  position: absolute;
+  border-radius: 50%;
+  content: '';
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.satisfaction-panel__hero::before {
+  width: 132px;
+  height: 132px;
+  right: -50px;
+  top: -55px;
+}
+
+.satisfaction-panel__hero::after {
+  width: 86px;
+  height: 86px;
+  right: 22px;
+  bottom: -56px;
+}
+
+.satisfaction-panel__hero-copy {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 5px;
+}
+
+.satisfaction-panel__hero-copy span {
+  color: rgba(255, 255, 255, 0.84);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+.satisfaction-panel__hero-copy strong {
+  font-size: 21px;
+  line-height: 1.3;
+}
+
+.satisfaction-panel__hero-copy small {
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.satisfaction-panel__mascot,
+.satisfaction-panel__spark {
+  position: absolute;
+  z-index: 1;
+}
+
+.satisfaction-panel__mascot {
+  right: 23px;
+  bottom: 22px;
+  font-size: 42px;
+  filter: drop-shadow(0 5px 7px rgba(56, 24, 123, 0.2));
+  transform: rotate(-8deg);
+}
+
+.satisfaction-panel__spark {
+  color: #fff8bd;
+  font-size: 19px;
+}
+
+.satisfaction-panel__spark--left {
+  right: 83px;
+  top: 20px;
+}
+
+.satisfaction-panel__spark--right {
+  right: 17px;
+  top: 15px;
+  color: #ffd9f1;
+  font-size: 15px;
+}
+
+.satisfaction-panel__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text);
+  font-weight: 700;
+}
+
+.satisfaction-panel__label small {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.satisfaction-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 100%;
+  gap: 12px;
+}
+
+.satisfaction-option {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-right: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 2px solid #e6e9f5;
+  border-radius: 14px;
+  background: #fff;
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.satisfaction-option:hover {
+  transform: translateY(-2px);
+}
+
+.satisfaction-option :deep(.el-radio__input) {
+  display: none;
+}
+
+.satisfaction-option :deep(.el-radio__label) {
+  display: block;
+  width: 100%;
+  padding: 0;
+  white-space: normal;
+}
+
+.satisfaction-option__content {
+  display: flex;
+  align-items: center;
+  min-height: 94px;
+  padding: 16px 13px;
+  gap: 11px;
+}
+
+.satisfaction-option__emoji {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 14px;
+  background: #f1f3f8;
+  font-size: 27px;
+}
+
+.satisfaction-option__copy {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.satisfaction-option__copy strong {
+  color: var(--color-text);
+  font-size: 16px;
+}
+
+.satisfaction-option__copy small {
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.satisfaction-option__mark {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  margin-left: auto;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 50%;
+  background: #dfe3ec;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.satisfaction-option.is-satisfied.is-selected .satisfaction-option__emoji {
+  background: #e4f8e9;
+}
+
+.satisfaction-option.is-unsatisfied.is-selected .satisfaction-option__emoji {
+  background: #fff0df;
+}
+
+.satisfaction-option.is-satisfied.is-selected .satisfaction-option__mark {
+  background: #31b96d;
+}
+
+.satisfaction-option.is-unsatisfied.is-selected .satisfaction-option__mark {
+  background: #ef9b44;
+}
+
+.satisfaction-option.is-satisfied.is-selected {
+  border-color: #43c778;
+  background: linear-gradient(135deg, #effcf3, #e3f8ea);
+  box-shadow: 0 8px 18px rgba(55, 181, 104, 0.18);
+}
+
+.satisfaction-option.is-unsatisfied.is-selected {
+  border-color: #f1a34e;
+  background: linear-gradient(135deg, #fff8ed, #fff0dc);
+  box-shadow: 0 8px 18px rgba(230, 145, 50, 0.18);
+}
+
+.satisfaction-panel__remark {
+  margin-top: 24px;
+  margin-bottom: 0;
+}
+
+.satisfaction-panel__remark :deep(.el-textarea__inner) {
+  min-height: 94px !important;
+  border-radius: 12px;
+  background: #fafbff;
+  box-shadow: inset 0 0 0 1px #eef0f8;
+}
+
+:global(.repair-satisfaction-dialog .el-dialog__header) {
+  padding-bottom: 12px;
+  border-bottom: 1px dashed #e5e8f5;
+}
+
+:global(.repair-satisfaction-dialog .el-dialog__title) {
+  color: #5b54cb;
+  font-size: 18px;
+  font-weight: 750;
+}
+
+:global(.repair-satisfaction-dialog .el-dialog__footer) {
+  padding-top: 12px;
+}
+
+:global(.repair-satisfaction-dialog .el-dialog__footer .el-button--primary) {
+  min-width: 126px;
+  border: 0;
+  background: linear-gradient(135deg, #5967ee, #a856db);
+  box-shadow: 0 7px 14px rgba(100, 81, 220, 0.25);
+}
+
 :global(.repair-detail-dialog) {
   max-width: calc(100% - 32px);
 }
@@ -1669,6 +1949,31 @@ onActivated(() => loadRecords({ recoverEmptyPage: true }))
 
   .repair-detail__reporter dl {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .satisfaction-panel__hero {
+    min-height: 108px;
+    padding: 20px 78px 20px 18px;
+    border-radius: 14px;
+  }
+
+  .satisfaction-panel__hero-copy strong {
+    font-size: 19px;
+  }
+
+  .satisfaction-panel__mascot {
+    right: 17px;
+    bottom: 20px;
+    font-size: 36px;
+  }
+
+  .satisfaction-options {
+    grid-template-columns: 1fr;
+  }
+
+  .satisfaction-option__content {
+    min-height: 82px;
+    padding: 13px;
   }
 
   .repair-detail__progress-section {

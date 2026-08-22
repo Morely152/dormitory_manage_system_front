@@ -17,6 +17,7 @@ import { ROLE_KEYS } from '@/config/access'
 import {
   assignRepairWorkOrder,
   createRepairWorkOrder,
+  getAssignedRepairRequests,
   getMyRepairWorkOrders,
   getRepairAssignmentCandidates,
   getRepairRequests,
@@ -124,7 +125,7 @@ const canResubmitSelected = computed(
 )
 const canVoidSelected = computed(
   () =>
-    (props.mode === 'pendingReview' || props.mode === 'dispatch' || isSystemAdminRecords.value) &&
+    (props.mode === 'pendingReview' || isSystemAdminRecords.value) &&
     ['WAIT_CENTER_REVIEW', 'CENTER_REJECTED', 'WAIT_ASSIGN'].includes(selectedOrder.value?.statusCode),
 )
 const canDispatchSelected = computed(
@@ -171,7 +172,7 @@ const pageConfigs = Object.freeze({
   },
   pending: {
     eyebrow: '维修工作台',
-    title: '待处理工单',
+    title: '待处理问题',
     /* description: '处理分配给当前维修账号的工单并提交维修结果。', */
     worker: true,
     statuses: ['REPAIRING', 'REWORK_REQUIRED'],
@@ -203,11 +204,14 @@ const loading = ref(false)
 const detailLoading = ref(false)
 const detailVisible = ref(false)
 const selectedOrder = ref(null)
+const requestDetailVisible = ref(false)
+const selectedRequest = ref(null)
 const saving = ref(false)
 const orderDialogVisible = ref(false)
 const reviewDialogVisible = ref(false)
 const assignmentDialogVisible = ref(false)
 const repairDialogVisible = ref(false)
+const selectedRepairIssue = ref(null)
 const qualityDialogVisible = ref(false)
 const creatingDraft = ref(false)
 const pendingRequests = ref([])
@@ -215,6 +219,8 @@ const pendingTotal = ref(0)
 const pendingPagination = reactive({ page: 1, pageSize: 20 })
 const pendingRequestCache = ref(new Map())
 const selectedPendingIds = ref([])
+const pendingTableRef = ref(null)
+const pendingSort = reactive({ field: 'reportedAt', order: 'descending' })
 const candidates = ref([])
 const summary = reactive({
   pendingRequestCount: 0,
@@ -252,13 +258,10 @@ const assignmentForm = reactive({
   repairerUserId: '',
 })
 
-const repairForm = reactive({
-  actualCost: undefined,
-})
 const repairItems = ref([])
-const repairImages = ref([])
 
 const qualityItems = ref([])
+const qualityDraftKey = computed(() => selectedOrder.value?.id ? `repair-quality-draft:${selectedOrder.value.id}` : '')
 let activatedOnce = false
 
 const displayedStatusOptions = computed(() => {
@@ -271,12 +274,6 @@ const usesScopedDefaultStatusFilter = computed(() =>
   ['pendingReview', 'dispatch'].includes(props.mode),
 )
 
-const activeRepairItems = computed(() =>
-  repairItems.value.filter((item) => item.selected),
-)
-const repairCoversAll = computed(() =>
-  repairItems.value.length > 0 && activeRepairItems.value.length === repairItems.value.length,
-)
 const pendingRequestOptions = computed(() => {
   const options = new Map(pendingRequests.value.map((request) => [request.id, request]))
   selectedPendingIds.value.forEach((requestId) => {
@@ -285,8 +282,33 @@ const pendingRequestOptions = computed(() => {
   })
   return [...options.values()]
 })
+const sortedPendingRequests = computed(() => [...pendingRequests.value].sort((first, second) => {
+  const firstValue = pendingSort.field === 'location'
+    ? getRecordLocation(first)
+    : first.reportedAt || first.createdAt || ''
+  const secondValue = pendingSort.field === 'location'
+    ? getRecordLocation(second)
+    : second.reportedAt || second.createdAt || ''
+  const comparison = String(firstValue).localeCompare(String(secondValue), 'zh-CN')
+  return pendingSort.order === 'ascending' ? comparison : -comparison
+}))
+const showReviewListFields = computed(() =>
+  ['pendingReview', 'review', 'dispatch', 'pending'].includes(props.mode),
+)
+const isPendingWorkOrderPage = computed(() => props.mode === 'pending')
+const showAssignmentInfo = computed(() =>
+  ['REPAIRING', 'WAIT_ACCEPTANCE', 'REWORK_REQUIRED', 'COMPLETED'].includes(selectedOrder.value?.statusCode),
+)
+const showRepairResultInfo = computed(() =>
+  ['WAIT_ACCEPTANCE', 'REWORK_REQUIRED', 'COMPLETED'].includes(selectedOrder.value?.statusCode),
+)
+const showAcceptanceInfo = computed(() => selectedOrder.value?.statusCode === 'COMPLETED')
 function formatRequestLabel(request) {
   return `#${request.id} · ${getIssueTypeName(request)} · ${getRecordLocation(request)}`
+}
+
+function isWithdrawnWorkOrderRequest(request) {
+  return request?.statusCode === 'PENDING' && request?.statusName === '待处理（工单已撤回）'
 }
 
 function getQueryParams() {
@@ -332,13 +354,20 @@ async function loadOrders({ recoverEmptyPage = false } = {}) {
 
   loading.value = true
   try {
+    const useAssignedRequests = props.mode === 'pending'
     const useMyWorkOrders =
       (!systemAdminRole.value && config.value.worker) ||
       (['records', 'history'].includes(props.mode) && repairAccountRole.value)
-    const response = useMyWorkOrders
+    const response = useAssignedRequests
+      ? await getAssignedRepairRequests({
+        processingOnly: true,
+        page: filters.page,
+        pageSize: filters.pageSize,
+      })
+      : useMyWorkOrders
       ? await getMyRepairWorkOrders(getQueryParams())
       : await getRepairWorkOrders(getQueryParams())
-    const page = toPagedResult(response, '工单列表加载失败')
+    const page = toPagedResult(response, useAssignedRequests ? '待处理问题加载失败' : '工单列表加载失败')
     rows.value = page.items
     total.value = page.total
     if (recoverEmptyPage && !rows.value.length && total.value > 0 && filters.page > 1) {
@@ -346,7 +375,7 @@ async function loadOrders({ recoverEmptyPage = false } = {}) {
       await loadOrders()
     }
   } catch (error) {
-    ElMessage.error(requestErrorMessage(error, '工单列表加载失败'))
+    ElMessage.error(requestErrorMessage(error, props.mode === 'pending' ? '待处理问题加载失败' : '工单列表加载失败'))
   } finally {
     loading.value = false
   }
@@ -396,6 +425,12 @@ function handlePendingTableSelectionChange(selection) {
     ...selectedPendingIds.value.filter((requestId) => !currentPageIds.has(String(requestId))),
     ...selectedOnPage,
   ]
+}
+
+function handlePendingRowClick(row, _column, event) {
+  if (event?.target?.closest?.('.el-checkbox')) return
+  const selected = selectedPendingIds.value.some((requestId) => String(requestId) === String(row.id))
+  pendingTableRef.value?.toggleRowSelection(row, !selected)
 }
 
 function handlePendingPageChange(page) {
@@ -506,6 +541,11 @@ async function refreshSelectedOrder() {
   } finally {
     detailLoading.value = false
   }
+}
+
+function openRequestDetail(request) {
+  selectedRequest.value = request
+  requestDetailVisible.value = true
 }
 
 async function recoverFromDataConflict(error) {
@@ -649,25 +689,49 @@ async function removeOrder() {
   }
 }
 
-function openReviewDialog() {
-  reviewForm.decision = 'APPROVE'
+function openReviewDialog(decision) {
+  reviewForm.decision = decision
   reviewForm.rejectReason = ''
-  reviewDialogVisible.value = true
+  if (decision === 'REJECT') {
+    reviewDialogVisible.value = true
+    return
+  }
+
+  confirmReview('APPROVE')
 }
 
-async function saveReview() {
-  if (reviewForm.decision === 'REJECT' && !reviewForm.rejectReason.trim()) {
+async function confirmReview(decision, rejectReason = '') {
+  const approving = decision === 'APPROVE'
+  try {
+    await ElMessageBox.confirm(
+      approving ? '确认通过此维修工单的审核吗？' : '确认驳回此维修工单吗？',
+      approving ? '确认通过审核' : '确认驳回工单',
+      {
+        confirmButtonText: approving ? '确认通过' : '确认驳回',
+        cancelButtonText: '取消',
+        type: approving ? 'success' : 'warning',
+      },
+    )
+  } catch {
+    return
+  }
+
+  await saveReview(decision, rejectReason)
+}
+
+async function saveReview(decision, rejectReason = '') {
+  if (decision === 'REJECT' && !rejectReason.trim()) {
     ElMessage.warning('请填写驳回原因')
     return
   }
 
   saving.value = true
   try {
-    const payload = { decision: reviewForm.decision }
-    if (reviewForm.decision === 'REJECT') payload.rejectReason = reviewForm.rejectReason.trim()
+    const payload = { decision }
+    if (decision === 'REJECT') payload.rejectReason = rejectReason.trim()
     await reviewRepairWorkOrder(selectedOrder.value.id, payload)
-    const approvedTeamOrder = reviewForm.decision === 'APPROVE' && selectedOrder.value?.workOrderTypeCode === 'TEAM'
-    ElMessage.success(approvedTeamOrder ? '工单已审核通过，已自动派发给维修队' : reviewForm.decision === 'APPROVE' ? '工单已审核通过' : '工单已驳回')
+    const approvedTeamOrder = decision === 'APPROVE' && selectedOrder.value?.workOrderTypeCode === 'TEAM'
+    ElMessage.success(approvedTeamOrder ? '工单已审核通过，已自动派发给维修队' : decision === 'APPROVE' ? '工单已审核通过' : '工单已驳回')
     reviewDialogVisible.value = false
     detailVisible.value = false
     await notificationStore.refresh()
@@ -741,62 +805,64 @@ async function saveAssignment() {
   }
 }
 
-function openRepairDialog() {
-  const requests = getRequestRows(selectedOrder.value).filter((request) =>
-    ['REPAIRING', 'REWORK_REQUIRED'].includes(request.statusCode),
-  )
-  repairItems.value = requests.map((request) => ({
-    requestId: request.id,
-    label: formatRequestLabel(request),
-    selected: true,
-    repairImageUrls: request.repairImageUrl ? [request.repairImageUrl] : [],
-  }))
-  repairForm.actualCost = undefined
-  repairImages.value = []
+function openRepairDialog(issue) {
+  if (!issue?.workOrder?.id) {
+    ElMessage.warning('请在待处理问题列表中逐条提交维修结果')
+    return
+  }
+
+  repairItems.value = [{
+    requestId: issue.id,
+    label: formatRequestLabel(issue),
+    repairImageUrls: issue.repairImageUrl ? [issue.repairImageUrl] : [],
+    actualCost: undefined,
+  }]
+  selectedRepairIssue.value = issue
   repairDialogVisible.value = true
 }
 
 async function saveRepairResults() {
-  if (!activeRepairItems.value.length) {
-    ElMessage.warning('请至少选择一条已维修的问题')
+  if (!repairItems.value.length) {
+    ElMessage.warning('当前没有可提交维修结果的问题')
     return
   }
 
-  if (activeRepairItems.value.some((item) => !item.repairImageUrls[0])) {
+  if (repairItems.value.some((item) => !item.repairImageUrls[0])) {
     ElMessage.warning('每条已维修问题都需要上传一张维修结果图片')
     return
   }
 
-  if (repairCoversAll.value && (repairForm.actualCost === undefined || repairForm.actualCost === null || repairForm.actualCost === '')) {
-    ElMessage.warning(selectedOrder.value?.workOrderTypeCode === 'TEAM'
-      ? '请填写实际包工包料费用'
-      : '请填写实际维修材料费用')
+  if (repairItems.value.some((item) => item.actualCost === undefined || item.actualCost === null || item.actualCost === '')) {
+    ElMessage.warning('请填写每条问题的本次实际费用')
     return
   }
 
-  if (repairForm.actualCost !== undefined && Number(repairForm.actualCost) < 0) {
+  if (repairItems.value.some((item) => Number(item.actualCost) < 0)) {
     ElMessage.warning('实际费用不能为负数')
     return
   }
 
-  const payload = {
-    items: activeRepairItems.value.map((item) => ({
-      requestId: item.requestId,
-      repairImageUrl: item.repairImageUrls[0],
-    })),
+  const workOrderId = selectedRepairIssue.value?.workOrder?.id
+  if (!workOrderId) {
+    ElMessage.error('未找到问题所属工单，无法提交维修结果')
+    return
   }
 
-  if (repairCoversAll.value) {
-    payload.actualCost = Number(repairForm.actualCost)
-    if (repairImages.value[0]) payload.repairImageUrl = repairImages.value[0]
+  const payload = {
+    items: repairItems.value.map((item) => ({
+      requestId: item.requestId,
+      repairImageUrl: item.repairImageUrls[0],
+      actualCost: Number(item.actualCost),
+    })),
   }
 
   saving.value = true
   try {
-    await submitRepairWorkOrderResults(selectedOrder.value.id, payload)
+    await submitRepairWorkOrderResults(workOrderId, payload)
     ElMessage.success('维修结果已提交')
     repairDialogVisible.value = false
-    detailVisible.value = false
+    selectedRepairIssue.value = null
+    if (props.mode !== 'pending') detailVisible.value = false
     await notificationStore.refresh()
     if (props.mode !== 'pending') {
       await router.push({ name: 'RepairWorkOrderPending' })
@@ -812,7 +878,7 @@ async function saveRepairResults() {
 }
 
 function openQualityDialog() {
-  qualityItems.value = getRequestRows(selectedOrder.value)
+  const items = getRequestRows(selectedOrder.value)
     .filter((request) => request.statusCode === 'WAIT_ACCEPTANCE')
     .map((request) => ({
       requestId: request.id,
@@ -821,8 +887,28 @@ function openQualityDialog() {
       acceptanceImageUrls: request.acceptanceImageUrl ? [request.acceptanceImageUrl] : [],
       reworkReason: '',
     }))
+  try {
+    const draft = qualityDraftKey.value ? JSON.parse(localStorage.getItem(qualityDraftKey.value) || 'null') : null
+    const draftByRequestId = new Map((Array.isArray(draft) ? draft : []).map((item) => [item.requestId, item]))
+    qualityItems.value = items.map((item) => ({
+      ...item,
+      ...(draftByRequestId.get(item.requestId) || {}),
+      acceptanceImageUrls: draftByRequestId.get(item.requestId)?.acceptanceImageUrls || item.acceptanceImageUrls,
+    }))
+  } catch {
+    qualityItems.value = items
+  }
   qualityDialogVisible.value = true
 }
+
+watch(
+  qualityItems,
+  (items) => {
+    if (!qualityDialogVisible.value || !qualityDraftKey.value || !items.length) return
+    localStorage.setItem(qualityDraftKey.value, JSON.stringify(items))
+  },
+  { deep: true },
+)
 
 async function saveQualityReview() {
   if (!qualityItems.value.length) {
@@ -856,6 +942,7 @@ async function saveQualityReview() {
       }),
     })
     ElMessage.success('验收结果已提交')
+    if (qualityDraftKey.value) localStorage.removeItem(qualityDraftKey.value)
     qualityDialogVisible.value = false
     detailVisible.value = false
     await notificationStore.refresh()
@@ -963,37 +1050,60 @@ onActivated(async () => {
         <div class="work-order-selection-card__heading">
           <div>
             <h2>选择待处理问题</h2>
-            
+          </div>
+          <div class="work-order-selection-card__actions">
+            <el-select v-model="pendingSort.field" size="small" aria-label="待处理问题排序字段">
+              <el-option label="按报修时间" value="reportedAt" />
+              <el-option label="按报修位置" value="location" />
+            </el-select>
+            <el-select v-model="pendingSort.order" size="small" aria-label="待处理问题排序方向">
+              <el-option label="降序" value="descending" />
+              <el-option label="升序" value="ascending" />
+            </el-select>
           </div>
           <el-button type="primary" :icon="DocumentAdd" :disabled="!selectedPendingIds.length"
             @click="openCreateDialog">
             创建工单（{{ selectedPendingIds.length }}）
           </el-button>
         </div>
-        <el-table class="work-order-desktop-table" v-loading="loading" :data="pendingRequests" row-key="id"
-          empty-text="暂无可建单的待处理问题" @selection-change="handlePendingTableSelectionChange">
-          <el-table-column type="selection" width="52" reserve-selection />
+        <el-table ref="pendingTableRef" class="work-order-desktop-table" v-loading="loading" :data="sortedPendingRequests" row-key="id"
+          empty-text="暂无可建单的待处理问题" @selection-change="handlePendingTableSelectionChange" @row-click="handlePendingRowClick">
+          <el-table-column type="selection" width="52" reserve-selection>
+            <template #header></template>
+          </el-table-column>
           <el-table-column label="问题编号" width="92"><template #default="{ row }">#{{ row.id
               }}</template></el-table-column>
-          <el-table-column label="问题类型" min-width="156"><template #default="{ row }">{{ getIssueTypeName(row)
-              }}</template></el-table-column>
+          <el-table-column label="问题类型" min-width="156"><template #default="{ row }"><span class="work-order-request-type">{{ getIssueTypeName(row)
+              }}<el-tag v-if="isWithdrawnWorkOrderRequest(row)" size="small" type="warning" effect="light">工单已撤回</el-tag></span></template></el-table-column>
           <el-table-column label="报修位置" min-width="240"><template #default="{ row }">{{ getRecordLocation(row)
               }}</template></el-table-column>
           <el-table-column label="问题描述" min-width="260"><template #default="{ row }">{{ getRequestDescription(row)
               }}</template></el-table-column>
+          <el-table-column label="报修图片" width="104">
+            <template #default="{ row }">
+              <el-image v-if="row.reportImageUrl" class="work-order-report-image" :src="row.reportImageUrl" fit="cover"
+                :preview-src-list="[row.reportImageUrl]" preview-teleported @click.stop />
+              <span v-else>—</span>
+            </template>
+          </el-table-column>
           <el-table-column label="报修时间" width="168"><template #default="{ row }">{{ formatDateTime(row.reportedAt ||
             row.createdAt) }}</template></el-table-column>
         </el-table>
         <el-checkbox-group v-loading="loading" v-model="selectedPendingIds" class="work-order-mobile-selection-list">
           <el-empty v-if="!pendingRequests.length" :image-size="80" description="暂无可建单的待处理问题" />
-          <el-checkbox v-for="request in pendingRequests" :key="request.id" :value="request.id"
+          <el-checkbox v-for="request in sortedPendingRequests" :key="request.id" :value="request.id"
             class="work-order-mobile-selection-card">
-            <span class="work-order-mobile-selection-card__heading">
-              <strong>#{{ request.id }} {{ getIssueTypeName(request) }}</strong>
-              <small>{{ formatDateTime(request.reportedAt || request.createdAt) }}</small>
+            <span class="work-order-mobile-selection-card__content">
+              <span class="work-order-mobile-selection-card__heading">
+                <strong>#{{ request.id }} {{ getIssueTypeName(request) }} <el-tag v-if="isWithdrawnWorkOrderRequest(request)" size="small" type="warning" effect="light">工单已撤回</el-tag></strong>
+                <small>{{ formatDateTime(request.reportedAt || request.createdAt) }}</small>
+              </span>
+              <span class="work-order-mobile-selection-card__location">{{ getRecordLocation(request) }}</span>
+              <span class="work-order-mobile-selection-card__description">{{ getRequestDescription(request) }}</span>
             </span>
-            <span class="work-order-mobile-selection-card__location">{{ getRecordLocation(request) }}</span>
-            <span class="work-order-mobile-selection-card__description">{{ getRequestDescription(request) }}</span>
+            <el-image v-if="request.reportImageUrl" class="work-order-mobile-selection-card__image"
+              :src="request.reportImageUrl" fit="cover" :preview-src-list="[request.reportImageUrl]" preview-teleported
+              @click.stop />
           </el-checkbox>
         </el-checkbox-group>
         <div v-if="pendingTotal" class="work-order-pagination">
@@ -1024,8 +1134,8 @@ onActivated(async () => {
       </section>
 
       <section v-if="!['review', 'dispatch', 'pending'].includes(mode)" class="work-order-filter-card" aria-label="工单筛选">
-        <el-form inline @submit.prevent="handleSearch">
-          <el-form-item v-if="showStatusFilter" label="处理状态">
+        <el-form inline @submit.prevent="handleSearch" > <!-- 换行添加行间距 -->
+          <el-form-item v-if="showStatusFilter" label="处理状态" >
             <el-select v-model="filters.statusCode" :clearable="statusFilterClearable" placeholder="全部状态"
               @change="handleSearch">
               <el-option v-for="item in displayedStatusOptions" :key="item.value" :label="item.label"
@@ -1068,48 +1178,74 @@ onActivated(async () => {
       </section>
 
       <section class="work-order-table-card">
-        <el-table class="work-order-desktop-table" v-loading="loading" :data="rows" empty-text="暂无符合条件的工单">
-          <el-table-column label="工单编号" width="110">
-            <template #default="{ row }"><button type="button" class="work-order-link" @click="openDetail(row)">#{{
+        <el-table class="work-order-desktop-table" v-loading="loading" :data="rows"
+          :empty-text="isPendingWorkOrderPage ? '暂无待处理问题' : '暂无符合条件的工单'"
+          @row-click="row => isPendingWorkOrderPage ? openRepairDialog(row) : openDetail(row)">
+          <el-table-column v-if="!isPendingWorkOrderPage" label="工单编号" width="110">
+            <template #default="{ row }"><button type="button" class="work-order-link" @click.stop="openDetail(row)">#{{
               row.id }}</button></template>
           </el-table-column>
-          <el-table-column label="工单类型" min-width="150"><template #default="{ row }">{{ row.workOrderTypeName ||
-            row.workOrderTypeCode || '—' }}</template></el-table-column>
-          <el-table-column label="所属苑区" min-width="130"><template #default="{ row }">{{ row.zoneName || '—'
+          <el-table-column v-if="!isPendingWorkOrderPage" label="工单类型" :width="showReviewListFields ? 150 : undefined" :min-width="showReviewListFields ? undefined : 150"><template #default="{ row }"><span class="work-order-type-cell">{{ row.workOrderTypeName ||
+            row.workOrderTypeCode || '—' }}<el-tag v-if="mode === 'review' && row.workOrderTypeCode === 'TEAM'" class="work-order-team-marker" type="danger" effect="dark" size="small">维修队</el-tag></span></template></el-table-column>
+          <el-table-column v-if="showReviewListFields" :label="isPendingWorkOrderPage ? '报修位置' : '所属楼栋'" width="160"><template #default="{ row }">{{ isPendingWorkOrderPage ? getRecordLocation(row) : row.buildingNames || '—'
               }}</template></el-table-column>
-          <el-table-column label="问题数量" width="100"><template #default="{ row }">{{ row.requestCount ?? row.count ?? '—'
+          <el-table-column v-if="isPendingWorkOrderPage" label="问题类型" min-width="160"><template #default="{ row }">{{ getIssueTypeName(row)
               }}</template></el-table-column>
-          <el-table-column label="维修账号" min-width="140"><template #default="{ row }">{{ getDisplayName(row.repairer)
+          <el-table-column v-if="isPendingWorkOrderPage" label="具体问题" min-width="280"><template #default="{ row }">{{ getRequestDescription(row)
               }}</template></el-table-column>
-          <el-table-column label="处理状态" min-width="142"><template #default="{ row }"><el-tag
+          <el-table-column v-if="!isPendingWorkOrderPage" label="问题数量" width="100"><template #default="{ row }">{{ row.requestCount ?? row.count ?? '—'
+              }}</template></el-table-column>
+          <el-table-column v-if="showReviewListFields" label="报修图片" min-width="280"><template #default="{ row }">
+            <div v-if="isPendingWorkOrderPage ? row.reportImageUrl : row.reportImageUrls?.length" class="work-order-report-images">
+              <el-image v-for="(imageUrl, index) in isPendingWorkOrderPage ? [row.reportImageUrl] : row.reportImageUrls" :key="`${imageUrl}-${index}`" class="work-order-report-image" :src="imageUrl" fit="cover"
+                :preview-src-list="isPendingWorkOrderPage ? [row.reportImageUrl] : row.reportImageUrls" preview-teleported @click.stop />
+            </div>
+            <span v-else>—</span>
+          </template></el-table-column>
+          <el-table-column v-if="showReviewListFields" :label="isPendingWorkOrderPage ? '报修时间' : '创建时间'" width="168"><template #default="{ row }">{{ formatDateTime(isPendingWorkOrderPage ? row.reportedAt : row.createdAt)
+              }}</template></el-table-column>
+          <el-table-column v-if="!showReviewListFields" label="所属苑区" min-width="130"><template #default="{ row }">{{ row.zoneName || '—'
+              }}</template></el-table-column>
+          <el-table-column v-if="!showReviewListFields" label="维修账号" min-width="140"><template #default="{ row }">{{ getDisplayName(row.repairer)
+              }}</template></el-table-column>
+          <el-table-column v-if="!showReviewListFields" label="处理状态" min-width="142"><template #default="{ row }"><el-tag
                 :type="getStatusTagType(row.statusCode)" effect="light">{{ getStatusLabel(row.statusCode,
                   row.statusName) }}</el-tag></template></el-table-column>
-          <el-table-column label="派单时间" width="168"><template #default="{ row }">{{ formatDateTime(row.assignedAt)
+          <el-table-column v-if="!showReviewListFields" label="派单时间" width="168"><template #default="{ row }">{{ formatDateTime(row.assignedAt)
               }}</template></el-table-column>
-          <el-table-column label="操作" width="100" fixed="right"><template #default="{ row }"><el-button text
-                type="primary" @click="openDetail(row)">{{ mode === 'review' ? '审核' : '查看'
+          <el-table-column v-if="mode === 'review' || mode === 'dispatch' || mode === 'pending' || !showReviewListFields" label="操作" width="100" fixed="right"><template #default="{ row }"><el-button text
+                type="primary" @click.stop="isPendingWorkOrderPage ? openRepairDialog(row) : openDetail(row)">{{ isPendingWorkOrderPage ? '提交维修' : mode === 'review' ? '审核' : '查看'
                 }}</el-button></template></el-table-column>
         </el-table>
         <div v-loading="loading" class="work-order-mobile-list">
-          <el-empty v-if="!rows.length" :image-size="80" description="暂无符合条件的工单" />
+          <el-empty v-if="!rows.length" :image-size="80" :description="isPendingWorkOrderPage ? '暂无待处理问题' : '暂无符合条件的工单'" />
           <button v-for="order in rows" :key="order.id" type="button" class="work-order-mobile-card"
-            @click="openDetail(order)">
-            <span class="work-order-mobile-card__heading">
-              <span>
-                <strong>工单 #{{ order.id }}</strong>
-                <small>{{ order.workOrderTypeName || order.workOrderTypeCode || '—' }}</small>
+            @click="isPendingWorkOrderPage ? openRepairDialog(order) : openDetail(order)">
+            <span class="work-order-mobile-card__content">
+              <span class="work-order-mobile-card__heading">
+                <span>
+                  <strong>{{ isPendingWorkOrderPage ? '问题类型：' + getIssueTypeName(order) : '工单 #' + order.id }}</strong>
+                  <small>{{ isPendingWorkOrderPage ? getRequestDescription(order) : order.workOrderTypeName || order.workOrderTypeCode || '—' }}</small>
+                </span>
+                <el-tag v-if="mode === 'review' && order.workOrderTypeCode === 'TEAM'" type="danger" effect="dark" size="small">维修队</el-tag>
+                <el-tag v-else-if="!showReviewListFields" :type="getStatusTagType(order.statusCode)" effect="light">
+                  {{ getStatusLabel(order.statusCode, order.statusName) }}
+                </el-tag>
               </span>
-              <el-tag :type="getStatusTagType(order.statusCode)" effect="light">
-                {{ getStatusLabel(order.statusCode, order.statusName) }}
-              </el-tag>
+              <span class="work-order-mobile-card__facts">
+                <span>{{ isPendingWorkOrderPage ? `位置：${getRecordLocation(order)}` : showReviewListFields ? `楼栋：${order.buildingNames || '—'}` : `苑区：${order.zoneName || '—'}` }}</span>
+                <span v-if="!isPendingWorkOrderPage">问题：{{ order.requestCount ?? order.count ?? '—' }} 条</span>
+                <span v-if="showReviewListFields">{{ isPendingWorkOrderPage ? '报修' : '创建' }}：{{ formatDateTime(isPendingWorkOrderPage ? order.reportedAt : order.createdAt) }}</span>
+                <span v-else>维修：{{ getDisplayName(order.repairer) }}</span>
+              </span>
+              <span v-if="!showReviewListFields" class="work-order-mobile-card__time">派单时间：{{ formatDateTime(order.assignedAt) }}</span>
+              <span v-if="mode === 'review'" class="work-order-mobile-card__action">查看详情并审核</span>
             </span>
-            <span class="work-order-mobile-card__facts">
-              <span>苑区：{{ order.zoneName || '—' }}</span>
-              <span>问题：{{ order.requestCount ?? order.count ?? '—' }} 条</span>
-              <span>维修：{{ getDisplayName(order.repairer) }}</span>
+            <span v-if="showReviewListFields && (isPendingWorkOrderPage ? order.reportImageUrl : order.reportImageUrls?.length)" class="work-order-mobile-card__images"
+              :class="{ 'is-single': isPendingWorkOrderPage || order.reportImageUrls.length === 1 }">
+              <el-image v-for="(imageUrl, index) in isPendingWorkOrderPage ? [order.reportImageUrl] : order.reportImageUrls" :key="`${imageUrl}-${index}`" class="work-order-mobile-card__image"
+                :src="imageUrl" fit="cover" :preview-src-list="isPendingWorkOrderPage ? [order.reportImageUrl] : order.reportImageUrls" preview-teleported @click.stop />
             </span>
-            <span class="work-order-mobile-card__time">派单时间：{{ formatDateTime(order.assignedAt) }}</span>
-            <span v-if="mode === 'review'" class="work-order-mobile-card__action">查看详情并审核</span>
           </button>
         </div>
         <div class="work-order-pagination">
@@ -1132,13 +1268,15 @@ onActivated(async () => {
           <el-card shadow="never" class="work-order-detail__section">
             <el-descriptions :column="2" border size="small" class="work-order-detail__facts">
               <el-descriptions-item label="所属苑区">{{ selectedOrder.zoneName || '—' }}</el-descriptions-item>
-              <el-descriptions-item label="维修账号">{{ getDisplayName(selectedOrder.repairer) }}</el-descriptions-item>
+              <el-descriptions-item label="报修楼栋">{{ selectedOrder.buildingNames || '—' }}</el-descriptions-item>
               <el-descriptions-item label="预计费用">{{ formatCurrency(selectedOrder.estimatedCost)
               }}</el-descriptions-item>
-              <el-descriptions-item label="实际费用">{{ formatCurrency(selectedOrder.actualCost) }}</el-descriptions-item>
-              <el-descriptions-item label="派单时间">{{ formatDateTime(selectedOrder.assignedAt) }}</el-descriptions-item>
-              <el-descriptions-item label="接单时间">{{ formatDateTime(selectedOrder.repairerAcceptedAt)
+              <el-descriptions-item v-if="showAssignmentInfo" label="维修账号">{{ getDisplayName(selectedOrder.repairer) }}</el-descriptions-item>
+              <el-descriptions-item v-if="showAssignmentInfo" label="派单时间">{{ formatDateTime(selectedOrder.assignedAt) }}</el-descriptions-item>
+              <el-descriptions-item v-if="showRepairResultInfo && selectedOrder.repairedAt" label="维修完成时间">{{ formatDateTime(selectedOrder.repairedAt)
               }}</el-descriptions-item>
+              <el-descriptions-item v-if="showRepairResultInfo" label="实际费用">{{ formatCurrency(selectedOrder.actualCost) }}</el-descriptions-item>
+              <el-descriptions-item v-if="showAcceptanceInfo" label="验收时间">{{ formatDateTime(selectedOrder.acceptedAt) }}</el-descriptions-item>
             </el-descriptions>
             <p v-if="selectedOrder.remark" class="work-order-detail__remark">工单备注：{{ selectedOrder.remark }}</p>
           </el-card>
@@ -1150,14 +1288,28 @@ onActivated(async () => {
               </div>
             </template>
             <div class="work-order-request-list">
-              <article v-for="request in getRequestRows(selectedOrder)" :key="request.id">
-                <div><strong># {{ request.id }} {{ getIssueTypeName(request) }}</strong><el-tag size="small"
-                    :type="getStatusTagType(request.statusCode)" effect="light">{{ getStatusLabel(request.statusCode,
-                      request.statusName) }}</el-tag></div>
-                <span>{{ getRecordLocation(request) }}</span>
-                <p>{{ getRequestDescription(request) }}</p>
-                <p v-if="request.reworkReason" class="work-order-request-list__rework">返修说明：{{ request.reworkReason }}
-                </p>
+              <article v-for="request in getRequestRows(selectedOrder)" :key="request.id" class="work-order-request-card"
+                :class="{ 'work-order-request-card--images-bottom': ['acceptance', 'records'].includes(mode) }"
+                role="button" tabindex="0" @click="openRequestDetail(request)" @keydown.enter="openRequestDetail(request)">
+                <div class="work-order-request-list__content">
+                  <strong># {{ request.id }} {{ getIssueTypeName(request) }}</strong>
+                  <span>{{ getRecordLocation(request) }}</span>
+                  <p>{{ getRequestDescription(request) }}</p>
+                  <p v-if="request.reworkReason" class="work-order-request-list__rework">返修说明：{{ request.reworkReason }}
+                  </p>
+                </div>
+                <div v-if="request.reportImageUrl || request.repairImageUrl" class="work-order-request-images">
+                  <figure v-if="request.reportImageUrl">
+                    <figcaption>报修图片</figcaption>
+                    <el-image class="work-order-detail__report-image" :src="request.reportImageUrl" fit="cover"
+                      :preview-src-list="[request.reportImageUrl]" preview-teleported @click.stop />
+                  </figure>
+                  <figure v-if="request.repairImageUrl">
+                    <figcaption>维修完成图片</figcaption>
+                    <el-image class="work-order-detail__report-image" :src="request.repairImageUrl" fit="cover"
+                      :preview-src-list="[request.repairImageUrl]" preview-teleported @click.stop />
+                  </figure>
+                </div>
               </article>
             </div>
           </el-card>
@@ -1167,7 +1319,10 @@ onActivated(async () => {
               @click="resubmitOrder">重新提交</el-button>
             <el-button v-if="canVoidSelected" type="danger" plain :loading="saving"
               @click="removeOrder">作废工单</el-button>
-            <el-button v-if="canReviewSelected" type="primary" :icon="Check" @click="openReviewDialog">开始审核</el-button>
+            <template v-if="canReviewSelected">
+              <el-button type="success" :icon="Check" :loading="saving" @click="openReviewDialog('APPROVE')">通过审核</el-button>
+              <el-button type="danger" :loading="saving" @click="openReviewDialog('REJECT')">驳回工单</el-button>
+            </template>
             <el-button v-if="canDispatchSelected" type="primary" :icon="Promotion"
               @click="openAssignmentDialog">派发工单</el-button>
             <el-button v-if="canSubmitResultsSelected" type="primary" :icon="Tools"
@@ -1177,6 +1332,42 @@ onActivated(async () => {
           </div>
         </template>
       </div>
+    </el-dialog>
+
+    <el-dialog v-model="requestDetailVisible" class="repair-form-dialog request-detail-dialog"
+      :title="`报修问题 #${selectedRequest?.id || ''}`" width="min(680px, calc(100% - 32px))" append-to-body>
+      <template v-if="selectedRequest">
+        <el-descriptions :column="2" border size="small" class="request-detail-dialog__facts">
+          <el-descriptions-item label="报修区域">{{ selectedRequest.repairArea?.name || '—' }}</el-descriptions-item>
+          <el-descriptions-item label="问题类型">{{ getIssueTypeName(selectedRequest) }}</el-descriptions-item>
+          <el-descriptions-item label="报修位置" :span="2">{{ getRecordLocation(selectedRequest) }}</el-descriptions-item>
+          <el-descriptions-item label="报修时间">{{ formatDateTime(selectedRequest.reportedAt) }}</el-descriptions-item>
+          <el-descriptions-item label="优先级">{{ selectedRequest.priorityName || '—' }}</el-descriptions-item>
+          <el-descriptions-item label="累计实际费用">{{ formatCurrency(selectedRequest.actualCost) }}</el-descriptions-item>
+          <el-descriptions-item label="报修人姓名">{{ selectedRequest.reporter?.name || '—' }}</el-descriptions-item>
+          <el-descriptions-item label="手机号码">{{ selectedRequest.reporter?.phone || '—' }}</el-descriptions-item>
+          <el-descriptions-item label="学号" :span="2">{{ selectedRequest.reporter?.studentNo || '—' }}</el-descriptions-item>
+        </el-descriptions>
+        <section class="request-detail-dialog__section">
+          <h3>问题描述</h3>
+          <p>{{ getRequestDescription(selectedRequest) }}</p>
+        </section>
+        <section v-if="selectedRequest.reportImageUrl || selectedRequest.repairImageUrl || selectedRequest.acceptanceImageUrl" class="request-detail-dialog__section">
+          <h3>相关图片</h3>
+          <div class="request-detail-dialog__images">
+            <figure v-if="selectedRequest.reportImageUrl"><figcaption>报修图片</figcaption><el-image :src="selectedRequest.reportImageUrl" fit="cover"
+              :preview-src-list="[selectedRequest.reportImageUrl]" preview-teleported /></figure>
+            <figure v-if="selectedRequest.repairImageUrl"><figcaption>维修图片</figcaption><el-image :src="selectedRequest.repairImageUrl" fit="cover"
+              :preview-src-list="[selectedRequest.repairImageUrl]" preview-teleported /></figure>
+            <figure v-if="selectedRequest.acceptanceImageUrl"><figcaption>验收图片</figcaption><el-image :src="selectedRequest.acceptanceImageUrl" fit="cover"
+              :preview-src-list="[selectedRequest.acceptanceImageUrl]" preview-teleported /></figure>
+          </div>
+        </section>
+        <section v-if="selectedRequest.reworkReason" class="request-detail-dialog__section">
+          <h3>返修说明</h3>
+          <p>{{ selectedRequest.reworkReason }}</p>
+        </section>
+      </template>
     </el-dialog>
 
     <el-dialog v-model="orderDialogVisible" class="repair-form-dialog" :title="creatingDraft ? '创建维修工单' : '修改维修工单'"
@@ -1200,16 +1391,13 @@ onActivated(async () => {
           :loading="saving" @click="saveOrder">{{ creatingDraft ? '提交审核' : '保存修改' }}</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="reviewDialogVisible" class="repair-form-dialog review-form-dialog" title="审核维修工单"
+    <el-dialog v-model="reviewDialogVisible" class="repair-form-dialog review-form-dialog" title="驳回维修工单"
       width="min(500px, calc(100% - 32px))" destroy-on-close>
-      <el-form label-position="top"><el-form-item label="审核结论" required><el-radio-group
-            v-model="reviewForm.decision"><el-radio value="APPROVE">审核通过</el-radio><el-radio
-              value="REJECT">驳回工单</el-radio></el-radio-group></el-form-item><el-form-item
-          v-if="reviewForm.decision === 'REJECT'" label="驳回原因" required><el-input v-model="reviewForm.rejectReason"
+      <el-form label-position="top"><el-form-item label="驳回原因" required><el-input v-model="reviewForm.rejectReason"
             type="textarea" :rows="4" maxlength="255" show-word-limit
             placeholder="请说明需要补充或修改的内容" /></el-form-item></el-form>
-      <template #footer><el-button @click="reviewDialogVisible = false">取消</el-button><el-button type="primary"
-          :loading="saving" @click="saveReview">确认提交</el-button></template>
+      <template #footer><el-button @click="reviewDialogVisible = false">取消</el-button><el-button type="danger"
+          :loading="saving" @click="confirmReview('REJECT', reviewForm.rejectReason)">继续</el-button></template>
     </el-dialog>
 
     <el-dialog v-model="assignmentDialogVisible" class="repair-form-dialog" title="派发维修工单"
@@ -1229,19 +1417,19 @@ onActivated(async () => {
     <el-dialog v-model="repairDialogVisible" class="repair-form-dialog" title="提交维修结果"
       width="min(760px, calc(100% - 32px))" destroy-on-close>
       <div class="repair-result-list">
-        <article v-for="item in repairItems" :key="item.requestId" :class="{ 'is-unselected': !item.selected }">
-          <el-checkbox v-model="item.selected"><strong>{{ item.label }}</strong></el-checkbox><span v-if="item.selected"
-            class="work-order-field-hint">维修结果图片（必填）</span>
-          <ImageUpload v-if="item.selected" v-model="item.repairImageUrls" :limit="1" purpose="REPAIR_PHOTO"
-            visibility="PUBLIC" />
+        <article v-for="item in repairItems" :key="item.requestId">
+          <h3>{{ item.label }}</h3>
+          <el-form label-position="top">
+            <el-form-item label="维修结果图片" required>
+              <ImageUpload v-model="item.repairImageUrls" :limit="1" purpose="REPAIR_PHOTO" visibility="PUBLIC" />
+            </el-form-item>
+            <el-form-item label="本次实际费用" required>
+              <el-input-number v-model="item.actualCost" :min="0" :precision="2" :step="50" controls-position="right" />
+              <span class="work-order-field-hint">返修再次提交时，费用将累加到该问题和工单总费用。</span>
+            </el-form-item>
+          </el-form>
         </article>
       </div>
-      <div v-if="repairCoversAll" class="repair-result-total"><el-form label-position="top"><el-form-item
-            :label="selectedOrder?.workOrderTypeCode === 'TEAM' ? '实际包工包料费用' : '实际维修材料费用'" required><el-input-number v-model="repairForm.actualCost" :min="0" :precision="2" :step="50"
-              controls-position="right" /><span
-              class="work-order-field-hint">全部问题完成后必须填写实际费用。</span></el-form-item><el-form-item label="维修单照片" v-if="selectedOrder?.workOrderTypeCode === 'TEAM'">
-            <ImageUpload v-model="repairImages" :limit="1" purpose="REPAIR_PHOTO" visibility="PUBLIC" />
-          </el-form-item></el-form></div>
       <template #footer><el-button @click="repairDialogVisible = false">取消</el-button><el-button type="primary"
           :loading="saving" @click="saveRepairResults">提交维修结果</el-button></template>
     </el-dialog>
@@ -1342,6 +1530,31 @@ onActivated(async () => {
   font-size: 13px;
 }
 
+.work-order-selection-card__actions {
+  display: flex;
+  flex: 1 1 auto;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.work-order-selection-card__actions :deep(.el-select) {
+  width: 132px;
+}
+
+.work-order-selection-card :deep(.work-order-desktop-table .el-table__body tr) {
+  cursor: pointer;
+}
+
+.work-order-request-type {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.work-order-selection-card :deep(.work-order-desktop-table .el-table__header-wrapper .el-table-column--selection .el-checkbox) {
+  display: none;
+}
+
 .work-order-summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1437,7 +1650,7 @@ onActivated(async () => {
 .work-order-filter-card :deep(.el-form-item) {
   min-width: 0;
   margin-right: 16px;
-  margin-bottom: 0;
+  margin-bottom: 8px;
 }
 
 .work-order-filter-card :deep(.el-select) {
@@ -1463,6 +1676,40 @@ onActivated(async () => {
 .work-order-link:hover {
   color: var(--color-primary-hover);
   text-decoration: underline;
+}
+
+.work-order-type-cell {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.work-order-team-marker {
+  flex: 0 0 auto;
+}
+
+.work-order-table-card :deep(.work-order-desktop-table .el-table__body tr) {
+  cursor: pointer;
+}
+
+.work-order-report-image {
+  display: block;
+  width: 64px;
+  height: 48px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+}
+
+.work-order-report-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.work-order-table-card .work-order-report-image {
+  width: 112px;
+  height: 72px;
 }
 
 .work-order-pagination {
@@ -1549,17 +1796,23 @@ onActivated(async () => {
 }
 
 .work-order-request-list article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 16px;
   padding: 14px;
   border: 1px solid var(--color-border);
   border-radius: 6px;
   background: var(--color-surface);
 }
 
-.work-order-request-list article>div {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+.work-order-request-card {
+  cursor: pointer;
+}
+
+.work-order-request-card:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
 }
 
 .work-order-request-list strong {
@@ -1584,6 +1837,73 @@ onActivated(async () => {
 
 .work-order-request-list .work-order-request-list__rework {
   color: #a2353b;
+}
+
+.work-order-request-images {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.work-order-request-images figure {
+  flex: 0 0 132px;
+  width: 132px;
+  margin: 0;
+}
+
+.work-order-request-images figcaption {
+  margin-bottom: 5px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.work-order-detail__report-image {
+  display: block;
+  width: 132px;
+  height: 96px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+}
+
+.request-detail-dialog__section {
+  margin-top: 18px;
+}
+
+.request-detail-dialog__section h3 {
+  margin: 0 0 8px;
+  color: var(--color-text);
+  font-size: 14px;
+}
+
+.request-detail-dialog__section p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.request-detail-dialog__images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.request-detail-dialog__images figure {
+  margin: 0;
+}
+
+.request-detail-dialog__images figcaption {
+  margin-bottom: 5px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.request-detail-dialog__images :deep(.el-image) {
+  width: 132px;
+  height: 96px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
 }
 
 :global(.repair-detail-dialog) {
@@ -1675,6 +1995,16 @@ onActivated(async () => {
   .work-order-selection-card__heading>.el-button {
     width: 100%;
     min-height: 44px;
+  }
+
+  .work-order-selection-card__actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .work-order-selection-card__actions :deep(.el-select) {
+    flex: 1 1 0;
+    width: auto;
   }
 
   .work-order-selection-card,
@@ -1769,10 +2099,48 @@ onActivated(async () => {
     display: grid;
     grid-row: 1;
     grid-column: 2;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 10px;
     min-width: 0;
     padding-left: 10px;
     color: inherit;
     white-space: normal;
+  }
+
+  .work-order-mobile-selection-card__content,
+  .work-order-mobile-card__content {
+    display: grid;
+    min-width: 0;
+    gap: 10px;
+  }
+
+  .work-order-mobile-selection-card__image,
+  .work-order-mobile-card__image {
+    display: block;
+    width: 96px;
+    height: 72px;
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+  }
+
+  .work-order-mobile-card__images {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    align-self: center;
+    width: 112px;
+    gap: 4px;
+  }
+
+  .work-order-mobile-card__images .work-order-mobile-card__image {
+    width: 54px;
+    height: 42px;
+  }
+
+  .work-order-mobile-card__images.is-single .work-order-mobile-card__image {
+    width: 96px;
+    height: 72px;
   }
 
   .work-order-mobile-selection-card__heading {
@@ -1807,6 +2175,8 @@ onActivated(async () => {
 
   .work-order-mobile-card {
     display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
     width: 100%;
     gap: 10px;
     padding: 14px;
@@ -1908,6 +2278,35 @@ onActivated(async () => {
   .work-order-detail__card-heading {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .work-order-request-images {
+    flex-direction: column;
+    flex-wrap: nowrap;
+  }
+
+  .work-order-request-images figure {
+    flex: 0 0 auto;
+    width: 132px;
+    height: auto;
+  }
+
+  .work-order-detail__report-image {
+    flex: 0 0 auto;
+    width: 132px;
+    height: 96px;
+  }
+
+  .work-order-request-list .work-order-request-card--images-bottom {
+    display: block;
+    padding-bottom: 40px;
+  }
+
+  .work-order-request-card--images-bottom .work-order-request-images {
+    margin-top: 14px;
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: flex-start;
   }
 
   .work-order-detail__actions .el-button {

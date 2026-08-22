@@ -17,6 +17,8 @@ const issueRecordRoles = Object.freeze([
   ROLE_KEYS.ZONE_MANAGER,
   ROLE_KEYS.ZONE_ADMIN,
   ROLE_KEYS.STUDENT,
+  ROLE_KEYS.REPAIR_WORKER,
+  ROLE_KEYS.REPAIR_TEAM,
 ])
 const workOrderRecordRoles = Object.freeze([
   ROLE_KEYS.SYSTEM_ADMIN,
