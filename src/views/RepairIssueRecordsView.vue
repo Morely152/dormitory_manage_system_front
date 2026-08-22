@@ -753,6 +753,9 @@ onActivated(() => loadRecords({ recoverEmptyPage: true }))
             <el-tag :type="getAudienceStatusTagType(row)" effect="light">
               {{ getAudienceStatusLabel(row) }}
             </el-tag>
+            <el-tag v-if="row.repairRound >= 2" type="danger" effect="plain" size="small" class="repair-round-tag">
+              返修{{ row.repairRound }}次
+            </el-tag>
           </template>
         </el-table-column>
         <el-table-column v-if="repairerRole" label="关联工单" width="116">
@@ -830,9 +833,12 @@ onActivated(() => loadRecords({ recoverEmptyPage: true }))
               <strong>{{ getIssueTypeName(record) }}</strong>
               <small>{{ getRequestAreaName(record) }}</small>
             </span>
-            <el-tag :type="getAudienceStatusTagType(record)" effect="light">
-              {{ getAudienceStatusLabel(record) }}
-            </el-tag>
+            <span class="repair-mobile-record-card__status-tags">
+              <el-tag v-if="record.repairRound >= 2" type="danger" effect="plain" size="small">返修{{ record.repairRound }}次</el-tag>
+              <el-tag :type="getAudienceStatusTagType(record)" effect="light">
+                {{ getAudienceStatusLabel(record) }}
+              </el-tag>
+            </span>
           </span>
           <span class="repair-mobile-record-card__location">
             <el-icon><Location /></el-icon>{{ getRecordLocation(record) }}
@@ -873,6 +879,9 @@ onActivated(() => loadRecords({ recoverEmptyPage: true }))
             </el-tag>
             <el-tag :type="getPriorityTagType(selectedRecord.priorityCode)" effect="plain">
               {{ getPriorityLabel(selectedRecord.priorityCode, selectedRecord.priorityName) }}优先级
+            </el-tag>
+            <el-tag v-if="selectedRecord.repairRound >= 2" type="danger" effect="dark">
+              第{{ selectedRecord.repairRound }}次维修（返修）
             </el-tag>
           </div>
           <section class="repair-detail__section">
@@ -966,7 +975,7 @@ onActivated(() => loadRecords({ recoverEmptyPage: true }))
           </section>
 
           <section v-if="selectedRecord.reworkReason" class="repair-detail__section repair-detail__notice">
-            <h3>返修说明</h3>
+            <h3>返修说明<span v-if="selectedRecord.repairRound >= 2" class="repair-detail__round-badge">第{{ selectedRecord.repairRound }}次维修</span></h3>
             <p>{{ selectedRecord.reworkReason }}</p>
           </section>
 
@@ -1345,6 +1354,18 @@ onActivated(() => loadRecords({ recoverEmptyPage: true }))
   background: #fff8f8;
 }
 
+.repair-detail__round-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 10px;
+  padding: 2px 10px;
+  border-radius: 10px;
+  background: #fef0f0;
+  color: #f56c6c;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .repair-detail__progress-section {
   padding: 22px 20px 26px;
   background: #f8faff;
@@ -1477,6 +1498,18 @@ onActivated(() => loadRecords({ recoverEmptyPage: true }))
 .repair-list-images__empty {
   color: var(--color-text-placeholder);
   font-size: 12px;
+}
+
+.repair-round-tag {
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.repair-mobile-record-card__status-tags {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
 }
 
 .satisfaction-panel {

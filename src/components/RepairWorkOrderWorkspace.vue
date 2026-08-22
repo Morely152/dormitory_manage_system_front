@@ -814,7 +814,7 @@ function openRepairDialog(issue) {
   repairItems.value = [{
     requestId: issue.id,
     label: formatRequestLabel(issue),
-    repairImageUrls: issue.repairImageUrl ? [issue.repairImageUrl] : [],
+    repairImageUrls: [],
     actualCost: undefined,
   }]
   selectedRepairIssue.value = issue
