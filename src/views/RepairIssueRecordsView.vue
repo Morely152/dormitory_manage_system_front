@@ -31,6 +31,7 @@ import {
   PRIORITY_OPTIONS,
   REQUEST_STATUSES,
   SATISFACTION_OPTIONS,
+  formatCurrency,
   formatDateTime,
   getIssueTypeName,
   getPriorityLabel,
@@ -754,9 +755,12 @@ onActivated(() => loadRecords({ recoverEmptyPage: true }))
               {{ getAudienceStatusLabel(row) }}
             </el-tag>
             <el-tag v-if="row.repairRound >= 2" type="danger" effect="plain" size="small" class="repair-round-tag">
-              返修{{ row.repairRound }}次
+              返修{{ row.repairRound - 1 }}次
             </el-tag>
           </template>
+        </el-table-column>
+        <el-table-column label="问题实际费用" width="128">
+          <template #default="{ row }">{{ formatCurrency(row.actualCost) }}</template>
         </el-table-column>
         <el-table-column v-if="repairerRole" label="关联工单" width="116">
           <template #default="{ row }">#{{ row.workOrder?.id || '—' }}</template>
@@ -834,7 +838,7 @@ onActivated(() => loadRecords({ recoverEmptyPage: true }))
               <small>{{ getRequestAreaName(record) }}</small>
             </span>
             <span class="repair-mobile-record-card__status-tags">
-              <el-tag v-if="record.repairRound >= 2" type="danger" effect="plain" size="small">返修{{ record.repairRound }}次</el-tag>
+              <el-tag v-if="record.repairRound >= 2" type="danger" effect="plain" size="small">返修{{ record.repairRound - 1 }}次</el-tag>
               <el-tag :type="getAudienceStatusTagType(record)" effect="light">
                 {{ getAudienceStatusLabel(record) }}
               </el-tag>
@@ -845,6 +849,7 @@ onActivated(() => loadRecords({ recoverEmptyPage: true }))
           </span>
           <span class="repair-mobile-record-card__meta">
             <span>{{ getPriorityLabel(record.priorityCode, record.priorityName) }}优先级</span>
+            <span>实际费用：{{ formatCurrency(record.actualCost) }}</span>
             <span>{{ formatDateTime(record.reportedAt || record.createdAt) }}</span>
           </span>
         </button>
@@ -881,7 +886,7 @@ onActivated(() => loadRecords({ recoverEmptyPage: true }))
               {{ getPriorityLabel(selectedRecord.priorityCode, selectedRecord.priorityName) }}优先级
             </el-tag>
             <el-tag v-if="selectedRecord.repairRound >= 2" type="danger" effect="dark">
-              第{{ selectedRecord.repairRound }}次维修（返修）
+              返修{{ selectedRecord.repairRound - 1 }}次
             </el-tag>
           </div>
           <section class="repair-detail__section">
@@ -975,7 +980,7 @@ onActivated(() => loadRecords({ recoverEmptyPage: true }))
           </section>
 
           <section v-if="selectedRecord.reworkReason" class="repair-detail__section repair-detail__notice">
-            <h3>返修说明<span v-if="selectedRecord.repairRound >= 2" class="repair-detail__round-badge">第{{ selectedRecord.repairRound }}次维修</span></h3>
+            <h3>返修说明<span v-if="selectedRecord.repairRound >= 2" class="repair-detail__round-badge">返修{{ selectedRecord.repairRound - 1 }}次</span></h3>
             <p>{{ selectedRecord.reworkReason }}</p>
           </section>
 

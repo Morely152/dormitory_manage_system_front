@@ -72,6 +72,7 @@ const systemAdminRole = computed(() => auth.currentRole.value === ROLE_KEYS.SYST
 const repairAccountRole = computed(() =>
   [ROLE_KEYS.REPAIR_WORKER, ROLE_KEYS.REPAIR_TEAM].includes(auth.currentRole.value),
 )
+const isRepairTeamRole = computed(() => auth.currentRole.value === ROLE_KEYS.REPAIR_TEAM)
 const canViewSummary = computed(() =>
   [ROLE_KEYS.ZONE_MANAGER, ROLE_KEYS.DORMITORY_ADMIN, ROLE_KEYS.SYSTEM_ADMIN].includes(
     auth.currentRole.value,
@@ -176,6 +177,7 @@ const pageConfigs = Object.freeze({
     /* description: '处理分配给当前维修账号的工单并提交维修结果。', */
     worker: true,
     statuses: ['REPAIRING', 'REWORK_REQUIRED'],
+    teamTitle: '待处理工单',
   },
   records: {
     eyebrow: '工单管理',
@@ -198,6 +200,11 @@ const pageConfigs = Object.freeze({
 })
 
 const config = computed(() => pageConfigs[props.mode] || pageConfigs.records)
+const pageTitle = computed(() => {
+  const cfg = config.value
+  if (props.mode === 'pending' && isRepairTeamRole.value) return cfg.teamTitle || cfg.title
+  return cfg.title
+})
 const rows = ref([])
 const total = ref(0)
 const loading = ref(false)
@@ -259,6 +266,7 @@ const assignmentForm = reactive({
 })
 
 const repairItems = ref([])
+const teamRepairImageUrls = ref([])
 
 const qualityItems = ref([])
 const qualityDraftKey = computed(() => selectedOrder.value?.id ? `repair-quality-draft:${selectedOrder.value.id}` : '')
@@ -293,9 +301,10 @@ const sortedPendingRequests = computed(() => [...pendingRequests.value].sort((fi
   return pendingSort.order === 'ascending' ? comparison : -comparison
 }))
 const showReviewListFields = computed(() =>
-  ['pendingReview', 'review', 'dispatch', 'pending'].includes(props.mode),
+  ['pendingReview', 'review', 'dispatch'].includes(props.mode) || isPendingWorkOrderPage.value,
 )
-const isPendingWorkOrderPage = computed(() => props.mode === 'pending')
+const isPendingWorkOrderPage = computed(() => props.mode === 'pending' && !isRepairTeamRole.value)
+const isTeamPendingPage = computed(() => props.mode === 'pending' && isRepairTeamRole.value)
 const showAssignmentInfo = computed(() =>
   ['REPAIRING', 'WAIT_ACCEPTANCE', 'REWORK_REQUIRED', 'COMPLETED'].includes(selectedOrder.value?.statusCode),
 )
@@ -309,6 +318,10 @@ function formatRequestLabel(request) {
 
 function isWithdrawnWorkOrderRequest(request) {
   return request?.statusCode === 'PENDING' && request?.statusName === '待处理（工单已撤回）'
+}
+
+function repairRoundLabel(request) {
+  return Number(request?.repairRound || 0) >= 2 ? `返修${request.repairRound - 1}次` : ''
 }
 
 function getQueryParams() {
@@ -354,7 +367,7 @@ async function loadOrders({ recoverEmptyPage = false } = {}) {
 
   loading.value = true
   try {
-    const useAssignedRequests = props.mode === 'pending'
+    const useAssignedRequests = isPendingWorkOrderPage.value
     const useMyWorkOrders =
       (!systemAdminRole.value && config.value.worker) ||
       (['records', 'history'].includes(props.mode) && repairAccountRole.value)
@@ -805,7 +818,52 @@ async function saveAssignment() {
   }
 }
 
-function openRepairDialog(issue) {
+async function openTeamRepairDialog(workOrder) {
+  if (!workOrder?.id) {
+    ElMessage.warning('未找到工单，无法提交维修结果')
+    return
+  }
+  let detail = workOrder
+  if (!getRequestRows(workOrder).length) {
+    try {
+      detail = unwrapRepairResponse(await getRepairWorkOrder(workOrder.id), '工单详情加载失败')
+    } catch (error) {
+      ElMessage.error(requestErrorMessage(error, '工单详情加载失败'))
+      return
+    }
+  }
+  const requests = getRequestRows(detail).filter((request) =>
+    ['REPAIRING', 'REWORK_REQUIRED'].includes(request.statusCode),
+  )
+  if (!requests.length) {
+    ElMessage.warning('当前工单没有待维修或待返修的问题')
+    return
+  }
+  repairItems.value = requests.map((request) => ({
+    requestId: request.id,
+    label: formatRequestLabel(request),
+    repairRound: Number(request.repairRound || 0),
+    reportImageUrl: request.reportImageUrl || '',
+    repairImageUrls: [],
+    actualCost: undefined,
+  }))
+  teamRepairImageUrls.value = []
+  selectedRepairIssue.value = detail
+  repairDialogVisible.value = true
+}
+
+async function openRepairDialog(issue) {
+  if (props.mode === 'pending' && isRepairTeamRole.value) {
+    if (issue) {
+      await openTeamRepairDialog(issue)
+      return
+    }
+    if (selectedOrder.value) {
+      await openTeamRepairDialog(selectedOrder.value)
+      return
+    }
+  }
+
   if (!issue?.workOrder?.id) {
     ElMessage.warning('请在待处理问题列表中逐条提交维修结果')
     return
@@ -814,9 +872,12 @@ function openRepairDialog(issue) {
   repairItems.value = [{
     requestId: issue.id,
     label: formatRequestLabel(issue),
+    repairRound: Number(issue.repairRound || 0),
+    reportImageUrl: issue.reportImageUrl || '',
     repairImageUrls: [],
     actualCost: undefined,
   }]
+  teamRepairImageUrls.value = []
   selectedRepairIssue.value = issue
   repairDialogVisible.value = true
 }
@@ -824,6 +885,11 @@ function openRepairDialog(issue) {
 async function saveRepairResults() {
   if (!repairItems.value.length) {
     ElMessage.warning('当前没有可提交维修结果的问题')
+    return
+  }
+
+  if (isRepairTeamRole.value && !teamRepairImageUrls.value[0]) {
+    ElMessage.warning('维修队工单必须上传一张工单维修图片')
     return
   }
 
@@ -842,7 +908,7 @@ async function saveRepairResults() {
     return
   }
 
-  const workOrderId = selectedRepairIssue.value?.workOrder?.id
+  const workOrderId = selectedRepairIssue.value?.workOrder?.id || selectedRepairIssue.value?.id
   if (!workOrderId) {
     ElMessage.error('未找到问题所属工单，无法提交维修结果')
     return
@@ -854,6 +920,7 @@ async function saveRepairResults() {
       repairImageUrl: item.repairImageUrls[0],
       actualCost: Number(item.actualCost),
     })),
+    repairImageUrl: isRepairTeamRole.value ? teamRepairImageUrls.value[0] : undefined,
   }
 
   saving.value = true
@@ -862,9 +929,9 @@ async function saveRepairResults() {
     ElMessage.success('维修结果已提交')
     repairDialogVisible.value = false
     selectedRepairIssue.value = null
-    if (props.mode !== 'pending') detailVisible.value = false
+    if (props.mode !== 'pending' || isRepairTeamRole.value) detailVisible.value = false
     await notificationStore.refresh()
-    if (props.mode !== 'pending') {
+    if (props.mode !== 'pending' && !isRepairTeamRole.value) {
       await router.push({ name: 'RepairWorkOrderPending' })
       return
     }
@@ -1039,7 +1106,7 @@ onActivated(async () => {
     <section v-if="!embedded" class="work-order-heading">
       <div>
         <p class="work-order-heading__eyebrow">{{ config.eyebrow }}</p>
-        <h1>{{ config.title }}</h1>
+        <h1>{{ pageTitle }}</h1>
         <p>{{ config.description }}</p>
       </div>
       <el-button :icon="Refresh" :loading="loading" @click="refreshPage">刷新数据</el-button>
@@ -1180,7 +1247,7 @@ onActivated(async () => {
       <section class="work-order-table-card">
         <el-table class="work-order-desktop-table" v-loading="loading" :data="rows"
           :empty-text="isPendingWorkOrderPage ? '暂无待处理问题' : '暂无符合条件的工单'"
-          @row-click="row => isPendingWorkOrderPage ? openRepairDialog(row) : openDetail(row)">
+          @row-click="row => isPendingWorkOrderPage || isTeamPendingPage ? openRepairDialog(row) : openDetail(row)">
           <el-table-column v-if="!isPendingWorkOrderPage" label="工单编号" width="110">
             <template #default="{ row }"><button type="button" class="work-order-link" @click.stop="openDetail(row)">#{{
               row.id }}</button></template>
@@ -1189,11 +1256,12 @@ onActivated(async () => {
             row.workOrderTypeCode || '—' }}<el-tag v-if="mode === 'review' && row.workOrderTypeCode === 'TEAM'" class="work-order-team-marker" type="danger" effect="dark" size="small">维修队</el-tag></span></template></el-table-column>
           <el-table-column v-if="showReviewListFields" :label="isPendingWorkOrderPage ? '报修位置' : '所属楼栋'" width="160"><template #default="{ row }">{{ isPendingWorkOrderPage ? getRecordLocation(row) : row.buildingNames || '—'
               }}</template></el-table-column>
-          <el-table-column v-if="isPendingWorkOrderPage" label="问题类型" min-width="160"><template #default="{ row }">{{ getIssueTypeName(row)
-              }}</template></el-table-column>
+          <el-table-column v-if="isPendingWorkOrderPage" label="问题类型" min-width="160"><template #default="{ row }"><span class="work-order-type-cell">{{ getIssueTypeName(row) }}<el-tag v-if="repairRoundLabel(row)" type="danger" effect="light" size="small">{{ repairRoundLabel(row) }}</el-tag></span></template></el-table-column>
           <el-table-column v-if="isPendingWorkOrderPage" label="具体问题" min-width="280"><template #default="{ row }">{{ getRequestDescription(row)
               }}</template></el-table-column>
           <el-table-column v-if="!isPendingWorkOrderPage" label="问题数量" width="100"><template #default="{ row }">{{ row.requestCount ?? row.count ?? '—'
+              }}</template></el-table-column>
+          <el-table-column v-if="!showReviewListFields" label="工单实际费用" width="128"><template #default="{ row }">{{ formatCurrency(row.actualCost)
               }}</template></el-table-column>
           <el-table-column v-if="showReviewListFields" label="报修图片" min-width="280"><template #default="{ row }">
             <div v-if="isPendingWorkOrderPage ? row.reportImageUrl : row.reportImageUrls?.length" class="work-order-report-images">
@@ -1208,23 +1276,29 @@ onActivated(async () => {
               }}</template></el-table-column>
           <el-table-column v-if="!showReviewListFields" label="维修账号" min-width="140"><template #default="{ row }">{{ getDisplayName(row.repairer)
               }}</template></el-table-column>
+          <el-table-column v-if="!showReviewListFields" label="维修单图片" width="130"><template #default="{ row }">
+            <el-image v-if="row.repairImageUrl" class="work-order-report-image" :src="row.repairImageUrl" fit="cover"
+              :preview-src-list="[row.repairImageUrl]" preview-teleported @click.stop />
+            <span v-else>—</span>
+          </template></el-table-column>
           <el-table-column v-if="!showReviewListFields" label="处理状态" min-width="142"><template #default="{ row }"><el-tag
                 :type="getStatusTagType(row.statusCode)" effect="light">{{ getStatusLabel(row.statusCode,
                   row.statusName) }}</el-tag></template></el-table-column>
           <el-table-column v-if="!showReviewListFields" label="派单时间" width="168"><template #default="{ row }">{{ formatDateTime(row.assignedAt)
               }}</template></el-table-column>
           <el-table-column v-if="mode === 'review' || mode === 'dispatch' || mode === 'pending' || !showReviewListFields" label="操作" width="100" fixed="right"><template #default="{ row }"><el-button text
-                type="primary" @click.stop="isPendingWorkOrderPage ? openRepairDialog(row) : openDetail(row)">{{ isPendingWorkOrderPage ? '提交维修' : mode === 'review' ? '审核' : '查看'
+                type="primary" @click.stop="isPendingWorkOrderPage || isTeamPendingPage ? openRepairDialog(row) : openDetail(row)">{{ isPendingWorkOrderPage || isTeamPendingPage ? '提交维修' : mode === 'review' ? '审核' : '查看'
                 }}</el-button></template></el-table-column>
         </el-table>
         <div v-loading="loading" class="work-order-mobile-list">
           <el-empty v-if="!rows.length" :image-size="80" :description="isPendingWorkOrderPage ? '暂无待处理问题' : '暂无符合条件的工单'" />
           <button v-for="order in rows" :key="order.id" type="button" class="work-order-mobile-card"
-            @click="isPendingWorkOrderPage ? openRepairDialog(order) : openDetail(order)">
+            @click="isPendingWorkOrderPage || isTeamPendingPage ? openRepairDialog(order) : openDetail(order)">
             <span class="work-order-mobile-card__content">
               <span class="work-order-mobile-card__heading">
                 <span>
                   <strong>{{ isPendingWorkOrderPage ? '问题类型：' + getIssueTypeName(order) : '工单 #' + order.id }}</strong>
+                  <el-tag v-if="isPendingWorkOrderPage && repairRoundLabel(order)" type="danger" effect="light" size="small">{{ repairRoundLabel(order) }}</el-tag>
                   <small>{{ isPendingWorkOrderPage ? getRequestDescription(order) : order.workOrderTypeName || order.workOrderTypeCode || '—' }}</small>
                 </span>
                 <el-tag v-if="mode === 'review' && order.workOrderTypeCode === 'TEAM'" type="danger" effect="dark" size="small">维修队</el-tag>
@@ -1237,6 +1311,7 @@ onActivated(async () => {
                 <span v-if="!isPendingWorkOrderPage">问题：{{ order.requestCount ?? order.count ?? '—' }} 条</span>
                 <span v-if="showReviewListFields">{{ isPendingWorkOrderPage ? '报修' : '创建' }}：{{ formatDateTime(isPendingWorkOrderPage ? order.reportedAt : order.createdAt) }}</span>
                 <span v-else>维修：{{ getDisplayName(order.repairer) }}</span>
+                <span v-if="!showReviewListFields">实际费用：{{ formatCurrency(order.actualCost) }}</span>
               </span>
               <span v-if="!showReviewListFields" class="work-order-mobile-card__time">派单时间：{{ formatDateTime(order.assignedAt) }}</span>
               <span v-if="mode === 'review'" class="work-order-mobile-card__action">查看详情并审核</span>
@@ -1279,6 +1354,11 @@ onActivated(async () => {
               <el-descriptions-item v-if="showAcceptanceInfo" label="验收时间">{{ formatDateTime(selectedOrder.acceptedAt) }}</el-descriptions-item>
             </el-descriptions>
             <p v-if="selectedOrder.remark" class="work-order-detail__remark">工单备注：{{ selectedOrder.remark }}</p>
+            <div v-if="selectedOrder.repairImageUrl" class="work-order-detail__work-order-image">
+              <span>维修单图片</span>
+              <el-image :src="selectedOrder.repairImageUrl" fit="cover"
+                :preview-src-list="[selectedOrder.repairImageUrl]" preview-teleported />
+            </div>
           </el-card>
           <el-card shadow="never" class="work-order-detail__section">
             <template #header>
@@ -1292,7 +1372,7 @@ onActivated(async () => {
                 :class="{ 'work-order-request-card--images-bottom': ['acceptance', 'records'].includes(mode) }"
                 role="button" tabindex="0" @click="openRequestDetail(request)" @keydown.enter="openRequestDetail(request)">
                 <div class="work-order-request-list__content">
-                  <strong># {{ request.id }} {{ getIssueTypeName(request) }}</strong>
+                  <strong># {{ request.id }} {{ getIssueTypeName(request) }} <el-tag v-if="repairRoundLabel(request)" type="danger" effect="light" size="small">{{ repairRoundLabel(request) }}</el-tag></strong>
                   <span>{{ getRecordLocation(request) }}</span>
                   <p>{{ getRequestDescription(request) }}</p>
                   <p v-if="request.reworkReason" class="work-order-request-list__rework">返修说明：{{ request.reworkReason }}
@@ -1418,17 +1498,28 @@ onActivated(async () => {
       width="min(760px, calc(100% - 32px))" destroy-on-close>
       <div class="repair-result-list">
         <article v-for="item in repairItems" :key="item.requestId">
-          <h3>{{ item.label }}</h3>
+          <h3>{{ item.label }}<el-tag v-if="item.repairRound >= 2" type="danger" effect="light" size="small">{{ `返修${item.repairRound - 1}次` }}</el-tag></h3>
+          <div class="repair-result-item__layout">
           <el-form label-position="top">
-            <el-form-item label="维修结果图片" required>
+            <el-form-item label="维修图片" required>
               <ImageUpload v-model="item.repairImageUrls" :limit="1" purpose="REPAIR_PHOTO" visibility="PUBLIC" />
             </el-form-item>
             <el-form-item label="本次实际费用" required>
               <el-input-number v-model="item.actualCost" :min="0" :precision="2" :step="50" controls-position="right" />
-              <span class="work-order-field-hint">返修再次提交时，费用将累加到该问题和工单总费用。</span>
+              <span class="work-order-field-hint">单位：元</span>
             </el-form-item>
           </el-form>
+          <figure v-if="item.reportImageUrl" class="repair-result-item__report-image">
+            <figcaption>报修图片</figcaption>
+            <el-image :src="item.reportImageUrl" fit="cover" :preview-src-list="[item.reportImageUrl]" preview-teleported />
+          </figure>
+          </div>
         </article>
+        <el-form v-if="isRepairTeamRole" label-position="top" class="repair-team-image-form">
+          <el-form-item label="维修单图片" required>
+            <ImageUpload v-model="teamRepairImageUrls" :limit="1" purpose="REPAIR_PHOTO" visibility="PUBLIC" />
+          </el-form-item>
+        </el-form>
       </div>
       <template #footer><el-button @click="repairDialogVisible = false">取消</el-button><el-button type="primary"
           :loading="saving" @click="saveRepairResults">提交维修结果</el-button></template>
@@ -1549,6 +1640,22 @@ onActivated(async () => {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+
+.work-order-detail__work-order-image {
+  display: grid;
+  width: 132px;
+  gap: 6px;
+  margin-top: 14px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.work-order-detail__work-order-image :deep(.el-image) {
+  width: 132px;
+  height: 96px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
 }
 
 .work-order-selection-card :deep(.work-order-desktop-table .el-table__header-wrapper .el-table-column--selection .el-checkbox) {
@@ -1946,6 +2053,38 @@ onActivated(async () => {
 
 .repair-result-list article.is-unselected {
   opacity: 0.58;
+}
+
+.repair-result-item__layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 132px;
+  gap: 18px;
+  align-items: start;
+}
+
+.repair-result-item__report-image {
+  margin: 14px 0 0;
+}
+
+.repair-result-item__report-image figcaption {
+  margin-bottom: 6px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.repair-result-item__report-image :deep(.el-image) {
+  display: block;
+  width: 132px;
+  height: 96px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+}
+
+.repair-team-image-form {
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: #fbfcff;
 }
 
 .repair-result-list :deep(.image-upload),
